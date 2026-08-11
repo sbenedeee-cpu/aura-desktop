@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Aura’s initial desktop shell. Native perception, file access, notifications, and external network access are intentionally withheld until their user-consented capabilities are implemented.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
