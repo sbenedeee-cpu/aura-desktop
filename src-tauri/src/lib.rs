@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum PrivacyMode {
     Focused,
@@ -138,6 +138,21 @@ fn set_privacy_mode(mode: PrivacyMode, state: tauri::State<'_, AppState>) -> Res
     Ok(())
 }
 
+fn build_capture_marker(
+    project_id: String,
+    privacy_mode: &PrivacyMode,
+) -> Result<CaptureMarker, String> {
+    if matches!(privacy_mode, PrivacyMode::Paused) {
+        return Err("Intentional capture is paused. Resume it before adding context.".to_string());
+    }
+
+    Ok(CaptureMarker {
+        project_id,
+        captured_at: "local-session".to_string(),
+        source: "manual-context-marker".to_string(),
+    })
+}
+
 #[tauri::command]
 fn record_intentional_capture(
     project_id: String,
@@ -149,15 +164,7 @@ fn record_intentional_capture(
         .map_err(|_| "Aura could not read its local privacy state.".to_string())?
         .clone();
 
-    if matches!(privacy_mode, PrivacyMode::Paused) {
-        return Err("Intentional capture is paused. Resume it before adding context.".to_string());
-    }
-
-    let marker = CaptureMarker {
-        project_id,
-        captured_at: "local-session".to_string(),
-        source: "manual-context-marker".to_string(),
-    };
+    let marker = build_capture_marker(project_id, &privacy_mode)?;
 
     state
         .capture_markers
@@ -183,4 +190,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_capture_marker, PrivacyMode};
+
+    #[test]
+    fn paused_privacy_mode_blocks_intentional_capture() {
+        let result = build_capture_marker("aura".to_string(), &PrivacyMode::Paused);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Intentional capture is paused. Resume it before adding context."
+        );
+    }
+
+    #[test]
+    fn focused_privacy_mode_creates_a_manual_marker() {
+        let marker = build_capture_marker("aura".to_string(), &PrivacyMode::Focused)
+            .expect("focused mode should permit intentional capture");
+
+        assert_eq!(marker.project_id, "aura");
+        assert_eq!(marker.source, "manual-context-marker");
+    }
 }

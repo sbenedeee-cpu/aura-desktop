@@ -1,0 +1,74 @@
+name: Aura Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aura-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  renderer:
+    name: Renderer quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify formatting, lint, types, tests, and renderer build
+        run: pnpm quality:renderer
+
+      - name: Audit production JavaScript dependencies
+        run: pnpm security:js
+
+  native:
+    name: Native quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up stable Rust with quality components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Verify Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Run Clippy with warnings denied
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Run native unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Install the Rust advisory audit tool
+        run: cargo install cargo-audit --locked
+
+      - name: Audit native dependencies
+        run: cargo audit --file src-tauri/Cargo.lock

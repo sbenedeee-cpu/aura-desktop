@@ -44,14 +44,28 @@ To create a production installer after the Windows prerequisites are installed:
 pnpm tauri build
 ```
 
+## Quality and Safety Net
+
+Before opening a pull request, install locked dependencies and run the complete safety-net suite:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm quality
+```
+
+The suite checks renderer formatting, linting, TypeScript, tests, and production build output; it also checks Rust formatting, Clippy warnings, native unit tests, and high-severity production JavaScript dependency advisories. GitHub Actions runs the same renderer and native checks on pull requests and pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for individual commands, privacy-sensitive change rules, and troubleshooting.
+
 ## Repository Guide
 
 ```text
 src/                         React desktop workspace
 src-tauri/                   Rust native core
 src-tauri/capabilities/      Tauri permission boundary
+src/test/                    Shared renderer-test setup
+.github/workflows/           Pull-request and main-branch quality gates
 docs/architecture.md         System shape and trust boundary
 docs/decisions/              Architecture decision records
+CONTRIBUTING.md              Local quality, review, and privacy-change protocol
 ```
 
 ## Security Posture
@@ -60,8 +74,8 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Next Build Increment
 
-The next safe implementation slice is **durable local project memory**: add a SQLite repository for projects, decisions, context markers, settings, and retention controls. After that, prototype a single user-initiated active-window metadata capture path on Windows. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, or computer-use actions until their individual product and security designs are approved.
+The next safe implementation slice is **durable local project memory**, but only after the product owner approves [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md). ENG-002 will then add a SQLite repository for projects, decisions, context markers, settings, and retention controls with migration and key-handling tests. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 
-Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), and [ADR-002](docs/decisions/ADR-002-intentional-capture.md) before adding native system access or data persistence.
+Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), and proposed [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before adding native system access or data persistence.
