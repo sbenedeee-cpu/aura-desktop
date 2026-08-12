@@ -74,14 +74,16 @@ const fallbackSnapshot: WorkspaceSnapshot = {
       id: "signal-2",
       kind: "context",
       title: "Intentional capture is active",
-      detail: "Aura will not observe or send desktop context until an explicit capture workflow exists.",
+      detail:
+        "Aura will not observe or send desktop context until an explicit capture workflow exists.",
       time: "Today",
     },
     {
       id: "signal-3",
       kind: "memory",
       title: "Research mandate linked",
-      detail: "The saved master research mandate is the source of truth for product and technical decisions.",
+      detail:
+        "The saved master research mandate is the source of truth for product and technical decisions.",
       time: "Today",
     },
   ],
@@ -113,7 +115,9 @@ function App() {
   }, []);
 
   const activeProject = useMemo(
-    () => snapshot.projects.find((project) => project.name === snapshot.activeProject) ?? snapshot.projects[0],
+    () =>
+      snapshot.projects.find((project) => project.name === snapshot.activeProject) ??
+      snapshot.projects[0],
     [snapshot],
   );
 
@@ -156,7 +160,9 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar" aria-label="Aura navigation">
         <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">A</div>
+          <div className="brand-mark" aria-hidden="true">
+            A
+          </div>
           <div>
             <p className="eyebrow">PERSONAL OPERATING SYSTEM</p>
             <h1>Aura</h1>
@@ -181,7 +187,9 @@ function App() {
           <div className="privacy-card">
             <div className="privacy-card-top">
               <span className={`status-dot ${snapshot.privacyMode}`} aria-hidden="true" />
-              <span>{snapshot.privacyMode === "focused" ? "Intentional capture" : "Capture paused"}</span>
+              <span>
+                {snapshot.privacyMode === "focused" ? "Intentional capture" : "Capture paused"}
+              </span>
             </div>
             <p>
               {snapshot.privacyMode === "focused"
@@ -199,18 +207,29 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{activeView.toUpperCase()} / {snapshot.activeProject.toUpperCase()}</p>
+            <p className="eyebrow">
+              {activeView.toUpperCase()} / {snapshot.activeProject.toUpperCase()}
+            </p>
             <h2>Good afternoon, Eternal.</h2>
           </div>
           <div className="topbar-actions">
             <span className="local-badge">Local-first</span>
-            <button className="capture-button" onClick={captureContext} type="button" disabled={isCapturing}>
+            <button
+              className="capture-button"
+              onClick={captureContext}
+              type="button"
+              disabled={isCapturing}
+            >
               {isCapturing ? "Saving context…" : "Add context"}
             </button>
           </div>
         </header>
 
-        {notice && <div className="notice" role="status">{notice}</div>}
+        {notice && (
+          <div className="notice" role="status">
+            {notice}
+          </div>
+        )}
 
         <section className="brief-card" aria-labelledby="continuity-heading">
           <div className="brief-card-heading">
@@ -234,11 +253,24 @@ function App() {
                 <p className="section-kicker">ACTIVE PROJECTS</p>
                 <h3>Work that needs continuity</h3>
               </div>
-              <button className="panel-action" type="button" onClick={() => setActiveView("Projects")}>View all</button>
+              <button
+                className="panel-action"
+                type="button"
+                onClick={() => setActiveView("Projects")}
+              >
+                View all
+              </button>
             </div>
             <div className="project-list">
               {snapshot.projects.map((project) => (
-                <button className="project-row" key={project.id} type="button" onClick={() => setSnapshot((current) => ({ ...current, activeProject: project.name }))}>
+                <button
+                  className="project-row"
+                  key={project.id}
+                  type="button"
+                  onClick={() =>
+                    setSnapshot((current) => ({ ...current, activeProject: project.name }))
+                  }
+                >
                   <div className="project-name-block">
                     <span className="project-dot" aria-hidden="true" />
                     <div>
@@ -269,7 +301,9 @@ function App() {
             <ol className="signal-list">
               {snapshot.signals.map((signal) => (
                 <li className="signal-item" key={signal.id}>
-                  <span className={`signal-icon ${signal.kind}`} aria-hidden="true">{signal.kind.slice(0, 1).toUpperCase()}</span>
+                  <span className={`signal-icon ${signal.kind}`} aria-hidden="true">
+                    {signal.kind.slice(0, 1).toUpperCase()}
+                  </span>
                   <div>
                     <strong>{signal.title}</strong>
                     <p>{signal.detail}</p>
@@ -286,13 +320,20 @@ function App() {
             <p className="section-kicker">V0 FOUNDATION</p>
             <h3>Designed to earn trust before it automates.</h3>
             <p>
-              Windows system awareness, project memory, and AI actions stay behind explicit permissions and readable local records.
+              Windows system awareness, project memory, and AI actions stay behind explicit
+              permissions and readable local records.
             </p>
           </div>
           <div className="foundation-pillars">
-            <span><b>01</b> Intentional perception</span>
-            <span><b>02</b> Local memory contract</span>
-            <span><b>03</b> Human-approved action</span>
+            <span>
+              <b>01</b> Intentional perception
+            </span>
+            <span>
+              <b>02</b> Local memory contract
+            </span>
+            <span>
+              <b>03</b> Human-approved action
+            </span>
           </div>
         </section>
 
