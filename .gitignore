@@ -26,3 +26,6 @@ dist-ssr
 # Rust and Tauri build artifacts
 src-tauri/target/
 src-tauri/gen/
+
+# Test coverage artifacts
+coverage/
