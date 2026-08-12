@@ -186,7 +186,86 @@ No AI provider, Windows UI Automation call, Graphics Capture call, OCR engine, o
 | Internal write draft | Structured schema; deterministic validation; preview/diff; rollback. | User confirmation before any durable write. |
 | External action/tool | Scope, policy gateway, approval token, audit replay, test suite. | Deferred from V0. |
 
-## 7. Non-Functional Requirements
+## 7. UX and Interaction Contract
+
+Aura is a **calm, high-signal desktop workspace**, not a generic productivity dashboard and not a science-fiction control surface. The UI must make the user’s current project state, the provenance of every important record, and Aura’s observation state legible at a glance. It must not use visual novelty to disguise incomplete information. When Aura does not know something, the interface must say so plainly and offer the next safe action.
+
+### 7.1 Product Design Principles
+
+| Principle | Required product expression | Prohibited shortcut |
+|---|---|---|
+| **Calm before clever** | Use stable layout, clear information hierarchy, familiar form controls, restrained motion, and readable labels. | Decorative AI gradients, pulsating status indicators, or dense dashboards that imply unsupported intelligence. |
+| **Truthful states** | Render empty, loading, stale, paused, error, and permission-required states as explicit first-class UI states. | Replacing missing data with generic optimistic copy or static sample content. |
+| **Project context is primary** | Keep the selected project visible in the header and attach every capture, decision, and search result to its project. | Global memory results or ambiguous capture destinations by default. |
+| **Control is near the consequence** | Place pause, cancel, edit, delete, expiry, and correction controls beside the data or action they affect. | Burying privacy controls in a distant settings page or an irreversible destructive action. |
+| **Evidence is inspectable** | Show source type, author, timestamp, project, classification, and lifecycle state where users evaluate a memory or answer. | Presenting derived text as a fact without a way to inspect its supporting records. |
+
+### 7.2 Desktop Shell and Information Architecture
+
+The V0 shell uses a persistent desktop sidebar with the destinations defined in Section 5. The route header must identify the current surface, selected project scope, privacy state, and the primary action for that surface. The shell must be usable at normal Windows desktop widths without horizontal overflow; it may collapse secondary detail panels before hiding primary task controls.
+
+| UI region | Required content and behavior | V0 constraint |
+|---|---|---|
+| **Sidebar** | Today, Projects, Capture, Memory, Activity, and Settings; persistent selected-route and keyboard-focus indicators. | Do not expose Cortex as a primary destination until a measured visualization experiment earns it. |
+| **Global project context** | Selected project name, project switcher, archive indication, and visible scope status. | A global mode must be an explicit opt-in, never an invisible fallback. |
+| **Privacy/status rail** | Current observation state, a direct pause/resume control, and a route to state details. | Never claim protection, capture, sync, or analysis is active unless verified by native state. |
+| **Primary work area** | One clear primary task per screen, with secondary detail or activity views visually subordinate. | Do not make every project attribute editable at once. |
+| **Confirmation layer** | Review-and-confirm step for capture, archive, delete, expiry, future model requests, and any privileged action. | Use no passive confirmation, pre-ticked consent, or confirmation that hides what will be stored. |
+
+### 7.3 Screen-Level UX Contracts
+
+| Surface | Default content | Primary action | Required truthful states | Must not do |
+|---|---|---|---|---|
+| **Today** | Selected project’s goal, active task, next step, latest decisions, unresolved blockers, and recent activity. | Resume the next step or open the selected project. | No project selected, no project data, stale summary, paused capture, repository failure. | Invent a continuity summary from absent records or show cross-project context by default. |
+| **Projects** | Project list with state, next step, last activity, archive state, and search/filter affordance. | Create or select a project. | First-use empty state, archive-only state, validation error, persistence failure. | Treat a blank project as an error; guide the user to add its first truthful record. |
+| **Capture** | Project selector, capture type, editable payload preview, classification, retention, and disclosure. | Confirm a deliberate capture. | Paused, no project selected, empty payload, sensitive-content warning, save failure, saved confirmation. | Save on focus loss, create a hidden background draft, or silently transmit content. |
+| **Memory** | Project-scoped, filterable records with lifecycle state and provenance. | Inspect, correct, supersede, expire, or delete a record. | No results, expired record, corrupted/missing source, correction conflict. | Present a derived candidate as an accepted decision. |
+| **Activity** | Chronological, readable local audit entries, filtered by project and event type. | Inspect a relevant event or open the linked record. | No activity, filtered-empty state, export failure. | Log raw capture text as the default activity-list content. |
+| **Settings** | Privacy mode, retention, exclusions model, diagnostics, export/delete paths, and future AI-provider boundary. | Change a durable user-controlled policy. | Unsupported feature, pending policy update, failed write, destructive confirmation. | Expose a provider key field in the renderer or imply an unimplemented control is active. |
+
+### 7.4 Interaction, Feedback, and State Semantics
+
+Every mutation follows a consistent state sequence: **idle → validating → review/confirm → saving → saved or recoverable error**. Loading states must preserve the user’s location and communicate what is being retrieved. Success feedback identifies the record or project affected; failure feedback explains whether data was saved, offers retry when safe, and never dismisses unsaved user-entered content without a warning.
+
+| Interaction | Required feedback | Acceptance threshold |
+|---|---|---|
+| Create or edit a project | Inline validation, save progress, success state, and event entry. | No silent trimming, overwrite, or successful toast before persistence resolves. |
+| Capture context | Full preview before confirmation, saving state, local-only notice, and linked activity event after success. | Cancel leaves no durable capture record. |
+| Correct/supersede a claim | Diff or clear old/new values, reason field where relevant, and explicit lifecycle result. | Previous record remains inspectable as superseded. |
+| Pause/resume | Immediate visible state change only after native confirmation; preserve the prior state if persistence fails. | There is no intermediate state that permits capture while the UI says paused. |
+| Search/filter | Visible selected-project scope and selected filters; explainable results. | Empty results distinguish no data from a repository/search failure. |
+
+### 7.5 Visual System and Accessibility Contract
+
+Antigravity must establish a small tokenized design system before feature-level styling expands. Use semantic design tokens rather than raw one-off colors, spacing, radii, type sizes, elevations, or motion values in components. The initial visual direction is a restrained dark desktop environment with warm-neutral surfaces, high legibility, an accessible accent reserved for actions and status, and no colour-only state meaning. Any light theme is a later, complete mode—not a partial inversion.
+
+| Token group | Required intent | Implementation rule |
+|---|---|---|
+| **Surface and text** | Distinguish canvas, raised panels, editable fields, subtle dividers, primary text, secondary text, and destructive states. | Name semantic roles; do not put raw hex literals in feature components. |
+| **Typography** | Use a limited type scale that clearly distinguishes route title, project title, section label, body, metadata, and code/IDs. | Default body text remains comfortably readable; metadata cannot carry the only meaning. |
+| **Spacing and density** | Support calm scanning in Today and Projects, with tighter but still legible rows in Activity and Memory. | Define a spacing scale and apply it consistently; do not solve density with tiny text. |
+| **Focus and keyboard** | Provide visible focus, logical tab order, labelled controls, predictable Escape behavior, and route-level keyboard support where implemented. | Hover must never be the sole way to discover or execute a critical action. |
+| **Motion** | Use short, purposeful transitions for feedback, hierarchy, and state change; respect reduced-motion preferences. | Do not use continuous decorative motion or animation that delays a safety-critical state. |
+
+**UX acceptance criteria**
+
+| ID | Requirement | Testable acceptance criterion |
+|---|---|---|
+| UX-01 | Design tokens | Renderer components use the documented semantic token system; a visual scan finds no new raw style values in feature components without a documented exception. |
+| UX-02 | Keyboard use | A keyboard-only user can select a route, select/create a project, complete/cancel a capture, inspect a memory record, and reach Settings. |
+| UX-03 | Focus visibility | Every interactive control has a visible focus treatment and focus moves predictably after modal open, save, cancel, and error. |
+| UX-04 | Accessible semantics | Icon-only controls have accessible names; controls have labels; state changes are announced or otherwise perceivable without colour alone. |
+| UX-05 | Truthful empty/error states | Each V0 route has specified first-use, empty, loading, save-failure, and permission/paused states with a next action. |
+| UX-06 | Project scope clarity | Every record list, search result, capture form, and model-preparation surface exposes its project scope before the user acts. |
+| UX-07 | Privacy adjacency | Pausing, capture disclosure, retention selection, edit-before-save, and delete/correction controls are reachable at the point of decision. |
+| UX-08 | Responsive desktop behavior | The primary workflows work without horizontal overflow at supported Windows desktop sizes; lower-priority panels collapse before core actions are hidden. |
+| UX-09 | Reduced motion | The renderer respects the operating system’s reduced-motion preference without removing essential feedback. |
+
+### 7.6 Reader-Test Protocol for the PRD
+
+Before an implementation milestone is accepted, Antigravity must perform a cold-reader check. Give a reviewer only this PRD, the relevant ADRs, and the proposed pull request. Ask the reviewer whether they can answer: **what the feature does; what it deliberately does not do; which data is stored; which project owns it; how a user can correct or stop it; how it is tested; and which release gate it must satisfy**. Any feature that leaves one of these questions ambiguous must be clarified in the PRD, ADR, or implementation plan before merge.
+
+## 8. Non-Functional Requirements
 
 | Area | Requirement |
 |---|---|
@@ -198,7 +277,7 @@ No AI provider, Windows UI Automation call, Graphics Capture call, OCR engine, o
 | Observability | Record minimal event metadata and errors locally; do not log raw capture bodies by default. |
 | Data ownership | Every record has a project, user/device owner, classification, source/provenance, and retention behavior. |
 
-## 8. Metrics and Release Criteria
+## 9. Metrics and Release Criteria
 
 The V0 pilot cannot be judged by downloads, screen-capture volume, or model call count. It succeeds only if it improves continuity without undermining trust.
 
@@ -214,7 +293,7 @@ The V0 pilot cannot be judged by downloads, screen-capture volume, or model call
 
 **Pilot release gate:** Do not add automated perception, provider-backed AI, or sync until the local continuity flow is stable, the user can inspect/correct all stored project records, and a short set of resume tasks shows credible value.
 
-## 9. Product Backlog, Ordered by Value and Risk
+## 10. Product Backlog, Ordered by Value and Risk
 
 | Order | Feature slice | Why now | Definition of done |
 |---:|---|---|---|
@@ -228,13 +307,13 @@ The V0 pilot cannot be judged by downloads, screen-capture volume, or model call
 | 8 | Backend/sync design spike | Validates identity, RLS, outbox, and event contract. | Migrations/RLS review, no secrets in client, sync test plan. |
 | 9 | Read-only AI project answer | Tests the actual continuity hypothesis. | Scoped evidence packet, cited answer, injection tests, telemetry. |
 
-## 10. Out of Scope and Change Control
+## 11. Out of Scope and Change Control
 
 Antigravity must reject or explicitly escalate any request that attempts to add continuous capture, hidden monitoring, a global personal profile, arbitrary browser/system automation, external messaging, financial action, broad filesystem access, background audio, third-party sync, or unsandboxed AI tooling.
 
 Every work item that changes capture, retention, permissions, tool schemas, local encryption, RLS, prompts, provider payloads, or audit behavior requires: an ADR; a focused test plan; acceptance criteria; a privacy/security review; and a clear rollback or user-correction route.
 
-## 11. References
+## 12. References
 
 This PRD operationalizes the existing Aura research foundation and uses its evidence base for platform and security decisions. Primary references include Microsoft’s Windows capture and UI Automation documentation, Tauri’s capability model, Supabase RLS guidance, and current agent safety guidance.[1] [2] [3] [4] [5]
 
