@@ -1,5 +1,11 @@
 use crate::db::{repositories::projects::ActivityRecord, LocalStore};
-use crate::domain::project::{AuraError, Project, ProjectStatus};
+use crate::{
+    db::repositories::captures::CreateCapture,
+    domain::{
+        capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
+        project::{AuraError, Project, ProjectStatus},
+    },
+};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -147,6 +153,25 @@ impl<'store> ProjectService<'store> {
             project_id,
             captured_at,
             source: "manual-context-marker".to_string(),
+        })
+    }
+
+    pub fn create_manual_capture(
+        &self,
+        project_id: String,
+        kind: CaptureKind,
+        label: String,
+        content: String,
+        classification: CaptureClassification,
+        retention: CaptureRetention,
+    ) -> Result<CaptureRecord, AuraError> {
+        self.store.captures().create(CreateCapture {
+            project_id,
+            kind,
+            label,
+            content,
+            classification,
+            retention,
         })
     }
 

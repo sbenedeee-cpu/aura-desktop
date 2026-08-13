@@ -3,7 +3,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 
 import "./App.css";
 
 type PrivacyMode = "focused" | "paused";
-type View = "today" | "projects";
+type View = "today" | "projects" | "capture";
 
 type ProjectStatus = "active" | "paused" | "archived";
 
@@ -50,6 +50,19 @@ type ProjectDraft = {
   currentTask: string;
   blocker: string;
   nextStep: string;
+};
+
+type CaptureKind = "manual_note" | "pasted_text" | "url";
+type CaptureClassification = "standard" | "sensitive";
+type CaptureRetention = "until_deleted" | "review_in_30_days";
+
+type CaptureDraft = {
+  projectId: string;
+  kind: CaptureKind;
+  label: string;
+  content: string;
+  classification: CaptureClassification;
+  retention: CaptureRetention;
 };
 
 const emptySnapshot: WorkspaceSnapshot = {
@@ -172,7 +185,7 @@ function App() {
   const [activeView, setActiveView] = useState<View>("today");
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingPrivacy, setIsSavingPrivacy] = useState(false);
-  const [isCapturing, setIsCapturing] = useState(false);
+  const [isSavingCapture, setIsSavingCapture] = useState(false);
   const [isSelectingProject, setIsSelectingProject] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isSavingProject, setIsSavingProject] = useState(false);
@@ -256,28 +269,24 @@ function App() {
     }
   }
 
-  async function captureContext() {
+  async function createManualCapture(draft: CaptureDraft) {
     if (snapshot.privacyMode === "paused") {
-      setNotice("Resume manual context before adding a context marker");
+      setNotice("Resume manual context before saving a capture");
       dismissNotice();
-      return;
+      return false;
     }
 
-    if (!selectedProject) {
-      setNotice("Select a local project before adding a context marker");
-      dismissNotice();
-      return;
-    }
-
-    setIsCapturing(true);
+    setIsSavingCapture(true);
     try {
-      await invoke("record_intentional_capture", { projectId: selectedProject.id });
+      await invoke("create_manual_capture", { input: draft });
       await loadWorkspace();
-      setNotice("Context marker saved locally");
+      setNotice("Capture saved locally. Aura made no network request.");
+      return true;
     } catch {
-      setNotice("Aura could not save the local context marker");
+      setNotice("Aura could not save this capture. Its content is still only in the form.");
+      return false;
     } finally {
-      setIsCapturing(false);
+      setIsSavingCapture(false);
       dismissNotice();
     }
   }
@@ -338,11 +347,18 @@ function App() {
     }
   }
 
-  const heading = activeView === "today" ? "Continue with clarity." : "Projects";
+  const heading =
+    activeView === "today"
+      ? "Continue with clarity."
+      : activeView === "projects"
+        ? "Projects"
+        : "Capture deliberately.";
   const subheading =
     activeView === "today"
       ? "Resume one deliberate thread at a time."
-      : "Local projects, held in context.";
+      : activeView === "projects"
+        ? "Local projects, held in context."
+        : "Review exactly what Aura will keep before you save it.";
 
   return (
     <div className="continuity-desk">
@@ -356,7 +372,8 @@ function App() {
 
         <nav className="route-list" aria-label="Workspace routes">
           {navigation.map((item) => {
-            const isAvailable = item.id === "today" || item.id === "projects";
+            const isAvailable =
+              item.id === "today" || item.id === "projects" || item.id === "capture";
             const isActive = activeView === item.id;
             return (
               <button
@@ -401,7 +418,13 @@ function App() {
       <main className="desk-main">
         <header className="desk-header">
           <div>
-            <p className="route-eyebrow">{activeView === "today" ? "TODAY" : "PROJECTS"}</p>
+            <p className="route-eyebrow">
+              {activeView === "today"
+                ? "TODAY"
+                : activeView === "projects"
+                  ? "PROJECTS"
+                  : "CAPTURE"}
+            </p>
             <h1>{heading}</h1>
             <p className="header-subtitle">{subheading}</p>
           </div>
@@ -419,17 +442,16 @@ function App() {
                 <Icon name="plus" />
                 New project
               </button>
-            ) : (
+            ) : activeView === "today" ? (
               <button
                 className="primary-action"
-                disabled={isCapturing || !selectedProject || snapshot.privacyMode === "paused"}
-                onClick={captureContext}
+                onClick={() => setActiveView("capture")}
                 type="button"
               >
                 <Icon name="plus" />
-                {isCapturing ? "Saving locally…" : "Add context marker"}
+                Add manual capture
               </button>
-            )}
+            ) : null}
           </div>
         </header>
 
@@ -459,7 +481,7 @@ function App() {
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
           />
-        ) : (
+        ) : activeView === "projects" ? (
           <ProjectsView
             isSaving={isSavingProject}
             onArchive={() => setShowArchiveDialog(true)}
@@ -467,6 +489,17 @@ function App() {
             onSave={saveProject}
             onSelectProject={selectProject}
             projects={snapshot.projects}
+            selectedProject={selectedProject}
+            selectionBusy={isSelectingProject}
+          />
+        ) : (
+          <CaptureView
+            isSaving={isSavingCapture}
+            onCancel={() => setActiveView("today")}
+            onSave={createManualCapture}
+            onSelectProject={selectProject}
+            privacyMode={snapshot.privacyMode}
+            projectOptions={snapshot.projects}
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
           />
@@ -795,6 +828,284 @@ function ProjectEditor({
           <Icon name="archive" /> Archive project
         </button>
       </div>
+    </section>
+  );
+}
+
+function CaptureView({
+  isSaving,
+  onCancel,
+  onSave,
+  onSelectProject,
+  privacyMode,
+  projectOptions,
+  selectedProject,
+  selectionBusy,
+}: {
+  isSaving: boolean;
+  onCancel: () => void;
+  onSave: (draft: CaptureDraft) => Promise<boolean>;
+  onSelectProject: (projectId: string) => Promise<void>;
+  privacyMode: PrivacyMode;
+  projectOptions: ProjectListItem[];
+  selectedProject: Project | null;
+  selectionBusy: boolean;
+}) {
+  const [draft, setDraft] = useState<CaptureDraft>({
+    projectId: selectedProject?.id || projectOptions[0]?.id || "",
+    kind: "manual_note",
+    label: "",
+    content: "",
+    classification: "standard",
+    retention: "until_deleted",
+  });
+  const [step, setStep] = useState<"edit" | "review">("edit");
+  const [error, setError] = useState("");
+  const isPaused = privacyMode === "paused";
+
+  function updateDraft<Field extends keyof CaptureDraft>(field: Field, value: CaptureDraft[Field]) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function chooseProject(projectId: string) {
+    updateDraft("projectId", projectId);
+    void onSelectProject(projectId);
+  }
+
+  function beginReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isPaused) {
+      setError("Manual capture is paused. Resume it before saving anything locally.");
+      return;
+    }
+    if (!draft.projectId) {
+      setError("Choose a local project before reviewing this capture.");
+      return;
+    }
+    if (!draft.label.trim() || !draft.content.trim()) {
+      setError("A label and the exact content are required before Aura can show the save review.");
+      return;
+    }
+    if (draft.kind === "url" && !/^https?:\/\//i.test(draft.content.trim())) {
+      setError("A URL capture must begin with http:// or https://.");
+      return;
+    }
+    setError("");
+    setStep("review");
+  }
+
+  async function confirmSave() {
+    const saved = await onSave(draft);
+    if (saved) {
+      setDraft((current) => ({ ...current, label: "", content: "" }));
+      setStep("edit");
+    }
+  }
+
+  const projectName =
+    projectOptions.find((project) => project.id === draft.projectId)?.name || "No project selected";
+  const contentLabel = draft.kind === "url" ? "URL" : "Content";
+
+  if (projectOptions.length === 0) {
+    return (
+      <section className="first-use" aria-labelledby="capture-empty-heading">
+        <p className="section-kicker">EXPLICIT LOCAL CAPTURE</p>
+        <h2 id="capture-empty-heading">Choose a project before you preserve context.</h2>
+        <p>
+          Aura never files context into an unscoped global inbox. Create a local project first, then
+          decide exactly what you want to save to it.
+        </p>
+        <button className="primary-action" onClick={onCancel} type="button">
+          Open projects <Icon name="arrow" />
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="capture-workspace" aria-labelledby="capture-heading">
+      <div className="capture-intro">
+        <div>
+          <p className="section-kicker">EXPLICIT LOCAL CAPTURE</p>
+          <h2 id="capture-heading">
+            {step === "review" ? "Review before Aura keeps it." : "Add only what you mean to keep."}
+          </h2>
+        </div>
+        <span className={`capture-state ${isPaused ? "is-paused" : ""}`}>
+          <Icon name="shield" />{" "}
+          {isPaused ? "Paused — saving is disabled" : "Manual only — no background capture"}
+        </span>
+      </div>
+
+      {isPaused && (
+        <div className="capture-warning" role="status">
+          <strong>Manual capture is paused.</strong>
+          Aura is not collecting, queueing, or saving anything from this form until you resume the
+          local manual-only mode.
+        </div>
+      )}
+
+      {step === "review" ? (
+        <div
+          className="capture-review"
+          onKeyDown={(event) => event.key === "Escape" && setStep("edit")}
+          tabIndex={-1}
+        >
+          <div className="review-heading">
+            <div>
+              <p className="section-kicker">SAVE REVIEW</p>
+              <h3>Here is the exact local record Aura will create.</h3>
+            </div>
+            <button className="quiet-action" onClick={() => setStep("edit")} type="button">
+              Edit capture
+            </button>
+          </div>
+          <dl className="capture-review-grid">
+            <div>
+              <dt>Destination</dt>
+              <dd>{projectName}</dd>
+            </div>
+            <div>
+              <dt>Type</dt>
+              <dd>{draft.kind.replace(/_/g, " ")}</dd>
+            </div>
+            <div>
+              <dt>Classification</dt>
+              <dd>{draft.classification}</dd>
+            </div>
+            <div>
+              <dt>Retention</dt>
+              <dd>{draft.retention.replace(/_/g, " ")}</dd>
+            </div>
+          </dl>
+          <article className="capture-preview">
+            <span>Label</span>
+            <h4>{draft.label}</h4>
+            <span>{contentLabel}</span>
+            <pre>{draft.content}</pre>
+          </article>
+          {draft.classification === "sensitive" && (
+            <p className="sensitive-note">
+              <strong>Sensitive is a label, not a guarantee.</strong> Edit or remove anything you do
+              not want kept on this device before confirming.
+            </p>
+          )}
+          <div className="capture-actions">
+            <button className="quiet-action" onClick={onCancel} type="button">
+              Cancel without saving
+            </button>
+            <button
+              className="primary-action"
+              disabled={isPaused || isSaving}
+              onClick={() => void confirmSave()}
+              type="button"
+            >
+              {isSaving ? "Saving locally…" : "Confirm and save locally"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="capture-form" onSubmit={beginReview}>
+          <fieldset disabled={isPaused || isSaving}>
+            <div className="capture-field-grid">
+              <label className="field">
+                <span>Destination project</span>
+                <select
+                  disabled={selectionBusy}
+                  onChange={(event) => chooseProject(event.target.value)}
+                  value={draft.projectId}
+                >
+                  {projectOptions.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Capture type</span>
+                <select
+                  onChange={(event) => updateDraft("kind", event.target.value as CaptureKind)}
+                  value={draft.kind}
+                >
+                  <option value="manual_note">Manual note</option>
+                  <option value="pasted_text">Pasted text</option>
+                  <option value="url">URL</option>
+                </select>
+              </label>
+              <label className="field field-wide">
+                <span>Label</span>
+                <input
+                  maxLength={120}
+                  onChange={(event) => updateDraft("label", event.target.value)}
+                  placeholder="What will help you recognize this later?"
+                  value={draft.label}
+                />
+              </label>
+              <label className="field field-wide">
+                <span>{contentLabel}</span>
+                <textarea
+                  maxLength={20000}
+                  onChange={(event) => updateDraft("content", event.target.value)}
+                  placeholder={
+                    draft.kind === "url"
+                      ? "https://example.com/reference"
+                      : "Paste or write only the context you want Aura to keep."
+                  }
+                  rows={8}
+                  value={draft.content}
+                />
+                <small>
+                  Aura does not read your clipboard or collect anything in the background.
+                </small>
+              </label>
+              <label className="field">
+                <span>Classification</span>
+                <select
+                  onChange={(event) =>
+                    updateDraft("classification", event.target.value as CaptureClassification)
+                  }
+                  value={draft.classification}
+                >
+                  <option value="standard">Standard</option>
+                  <option value="sensitive">Sensitive</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Retention</span>
+                <select
+                  onChange={(event) =>
+                    updateDraft("retention", event.target.value as CaptureRetention)
+                  }
+                  value={draft.retention}
+                >
+                  <option value="until_deleted">Until deleted</option>
+                  <option value="review_in_30_days">Review in 30 days</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+          {draft.classification === "sensitive" && (
+            <p className="sensitive-note">
+              Sensitive data can include credentials, health, financial, or private client context.
+              This label helps you review it; it does not automatically detect or remove anything.
+            </p>
+          )}
+          {error && (
+            <p className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="capture-actions">
+            <button className="quiet-action" onClick={onCancel} type="button">
+              Cancel without saving
+            </button>
+            <button className="primary-action" disabled={isPaused || isSaving} type="submit">
+              Review before saving <Icon name="arrow" />
+            </button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }

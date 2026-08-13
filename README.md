@@ -6,14 +6,14 @@ Aura is a **privacy-first Windows desktop AI coordination system**. It is being 
 
 ## Current Foundation
 
-The repository includes a Tauri 2 application with a React and TypeScript workspace, a Rust-native command layer, an intentional-capture privacy state machine, and an opinionated project dashboard. Project records, privacy settings, manual context markers, and activity history are now stored through a Rust-owned local SQLite boundary; the renderer never opens the database or constructs SQL.
+The repository includes a Tauri 2 application with a React and TypeScript workspace, a Rust-native command layer, an intentional-capture privacy state machine, and a project-resumption workspace. Project records, selected-project state, explicit manual captures, privacy settings, and project-scoped activity history are stored through a Rust-owned local SQLite boundary; the renderer never opens the database or constructs SQL.
 
 | Area | Initial status |
 |---|---|
 | Windows desktop shell | Implemented with Tauri 2 |
 | Project continuity workspace | Implemented with durable local SQLite records |
 | Privacy mode | Implemented; capture can be paused and resumed |
-| Manual context marker | Implemented as a local native command |
+| Explicit manual capture | Implemented with review-before-save, classification, retention, project scope, cancellation, and a native paused-mode block |
 | SQLite local store | Implemented with numbered, transactional migrations |
 | Active-window metadata | Planned after consent and exclusions design |
 | Screen capture and OCR | Explicitly excluded from V0 |
@@ -57,7 +57,7 @@ The suite checks renderer formatting, linting, TypeScript, tests, and production
 
 ## Local Storage and Recovery
 
-Aura opens a single `aura.sqlite3` database in the operating system’s Tauri application-data directory for the current user. The database contains only product records: projects, privacy settings, manual context markers, activity history, and migration metadata. It does not collect screenshots, clipboard contents, microphone audio, access tokens, provider credentials, or unapproved desktop captures.
+Aura opens a single `aura.sqlite3` database in the operating system’s Tauri application-data directory for the current user. The database contains only product records: projects, selected-project state, privacy settings, explicit manual captures, activity history, and migration metadata. It does not collect screenshots, clipboard contents, microphone audio, access tokens, provider credentials, or unapproved desktop captures.
 
 Migrations are numbered, append-only, and applied inside a SQLite transaction. If a migration fails, Aura does not reset the database; it reports that the prior records were left unchanged so the user can restart an updated build or retain a copy of the database before further recovery work. The Windows DPAPI-wrapped data-encryption-key proof of concept remains required before Aura ships persisted user data beyond this controlled V0 engineering milestone. See [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) for the governing decision.
 
@@ -80,7 +80,7 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Next Build Increment
 
-The next safe implementation slice is **Windows DPAPI key-wrapping and encrypted-storage compatibility proof of concept**, as required by [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before shipping persisted user data. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
+The next product increment is **decisions and memory**: local claims with provenance, correction/supersession, and project-scoped retrieval. The **Windows DPAPI key-wrapping and encrypted-storage compatibility proof of concept** remains a mandatory release-security gate under [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before Aura ships persisted user data. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 
