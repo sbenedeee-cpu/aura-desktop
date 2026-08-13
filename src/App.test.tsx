@@ -43,6 +43,7 @@ const persistedWorkspace = {
     },
   ],
   activity: [],
+  decisions: [],
 };
 
 describe("Aura Continuity Desk privacy boundary", () => {
@@ -51,6 +52,9 @@ describe("Aura Continuity Desk privacy boundary", () => {
     invokeMock.mockImplementation((command) => {
       if (command === "get_workspace_snapshot") {
         return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "list_decisions") {
+        return Promise.resolve([]);
       }
 
       return Promise.resolve(undefined);
@@ -102,6 +106,36 @@ describe("Aura Continuity Desk privacy boundary", () => {
           content: "Use a Rust-owned persistence boundary.",
           classification: "standard",
           retention: "until_deleted",
+        },
+      });
+    });
+  });
+
+  it("records a user-authored decision with explicit local provenance", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Memory" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Memory" }));
+    await user.type(screen.getByLabelText("Decision"), "Use bundled SQLite");
+    await user.type(
+      screen.getByLabelText("Rationale"),
+      "The application needs a portable local database.",
+    );
+    await user.type(screen.getByLabelText(/^Source or basis/), "ADR-003");
+    await user.click(screen.getByRole("button", { name: "Save decision" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_decision", {
+        input: {
+          projectId: "aura",
+          title: "Use bundled SQLite",
+          rationale: "The application needs a portable local database.",
+          confidence: "medium",
+          sourceLabels: ["ADR-003"],
         },
       });
     });

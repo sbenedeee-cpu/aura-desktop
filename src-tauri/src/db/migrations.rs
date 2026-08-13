@@ -77,6 +77,43 @@ pub const MIGRATIONS: &[Migration] = &[
                 ON captures(project_id, created_at DESC);
         ",
     },
+    Migration {
+        version: 3,
+        name: "project-scoped-decision-claims",
+        sql: "
+            CREATE TABLE decision_claims (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                rationale TEXT NOT NULL,
+                confidence TEXT NOT NULL CHECK(confidence IN ('low', 'medium', 'high')),
+                author_type TEXT NOT NULL CHECK(author_type = 'user'),
+                status TEXT NOT NULL CHECK(status IN ('confirmed', 'superseded')) DEFAULT 'confirmed',
+                supersedes_claim_id TEXT REFERENCES decision_claims(id),
+                superseded_by_claim_id TEXT REFERENCES decision_claims(id),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX decision_claims_project_created_at_idx
+                ON decision_claims(project_id, created_at DESC);
+            CREATE INDEX decision_claims_project_status_created_at_idx
+                ON decision_claims(project_id, status, created_at DESC);
+
+            CREATE TABLE decision_sources (
+                id TEXT PRIMARY KEY,
+                claim_id TEXT NOT NULL REFERENCES decision_claims(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                label TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX decision_sources_claim_created_at_idx
+                ON decision_sources(claim_id, created_at ASC);
+            CREATE INDEX decision_sources_project_created_at_idx
+                ON decision_sources(project_id, created_at DESC);
+        ",
+    },
 ];
 
 pub fn run(connection: &mut Connection) -> Result<(), AuraError> {
