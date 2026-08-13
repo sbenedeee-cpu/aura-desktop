@@ -8,36 +8,14 @@ use domain::{
     capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
     claim::{ClaimConfidence, DecisionClaim},
     project::{AuraError, Project},
+    settings::{
+        CreateExclusionRuleInput, ExclusionRule, PrivacyMode, PrivacyPreferences,
+        SetExclusionEnabledInput, UpdatePrivacyPreferencesInput,
+    },
 };
 use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::Manager;
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum PrivacyMode {
-    Focused,
-    Paused,
-}
-
-impl PrivacyMode {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Focused => "focused",
-            Self::Paused => "paused",
-        }
-    }
-
-    fn from_store(value: &str) -> Result<Self, AuraError> {
-        match value {
-            "focused" => Ok(Self::Focused),
-            "paused" => Ok(Self::Paused),
-            _ => Err(AuraError::Storage(
-                "Aura found an unsupported local privacy mode.".to_string(),
-            )),
-        }
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,7 +45,7 @@ struct CreateManualCaptureInput {
     label: String,
     content: String,
     classification: String,
-    retention: String,
+    retention: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,23 +62,21 @@ struct AppState {
     store: Mutex<LocalStore>,
 }
 
-fn with_store<T>(
+fn with_store_mut<T>(
     state: &tauri::State<'_, AppState>,
-    operation: impl FnOnce(&LocalStore) -> Result<T, AuraError>,
+    operation: impl FnOnce(&mut LocalStore) -> Result<T, AuraError>,
 ) -> Result<T, String> {
-    let store = state
+    let mut store = state
         .store
         .lock()
         .map_err(|_| "Aura could not access its local workspace safely.".to_string())?;
-    operation(&store).map_err(|error| error.to_string())
+    operation(&mut store).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn get_workspace_snapshot(state: tauri::State<'_, AppState>) -> Result<WorkspaceSnapshot, String> {
-    with_store(&state, |store| {
-        let snapshot = ProjectService::new(store).workspace_snapshot()?;
-        PrivacyMode::from_store(&snapshot.privacy_mode)?;
-        Ok(snapshot)
+    with_store_mut(&state, |store| {
+        ProjectService::new(store).workspace_snapshot()
     })
 }
 
@@ -109,7 +85,7 @@ fn create_project(
     input: CreateProjectInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<Project, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).create_project(
             input.name,
             input.goal,
@@ -121,7 +97,7 @@ fn create_project(
 
 #[tauri::command]
 fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
-    with_store(&state, |store| store.projects().list_active())
+    with_store_mut(&state, |store| store.projects().list_active())
 }
 
 #[tauri::command]
@@ -129,7 +105,7 @@ fn select_project(
     project_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Project, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).select_project(project_id)
     })
 }
@@ -140,7 +116,7 @@ fn update_project(
     input: UpdateProjectInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<Project, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).update_project(
             project_id,
             UpdateProject {
@@ -157,14 +133,42 @@ fn update_project(
 
 #[tauri::command]
 fn archive_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).archive_project(project_id)
     })
 }
 
 #[tauri::command]
-fn set_privacy_mode(mode: PrivacyMode, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    with_store(&state, |store| store.set_privacy_mode(mode.as_str()))
+fn set_privacy_mode(
+    mode: PrivacyMode,
+    state: tauri::State<'_, AppState>,
+) -> Result<PrivacyPreferences, String> {
+    with_store_mut(&state, |store| {
+        let default_capture_retention = store.privacy_preferences()?.default_capture_retention;
+        ProjectService::new(store).update_privacy_preferences(UpdatePrivacyPreferencesInput {
+            privacy_mode: mode,
+            default_capture_retention,
+        })
+    })
+}
+
+#[tauri::command]
+fn get_privacy_preferences(
+    state: tauri::State<'_, AppState>,
+) -> Result<PrivacyPreferences, String> {
+    with_store_mut(&state, |store| {
+        ProjectService::new(store).privacy_preferences()
+    })
+}
+
+#[tauri::command]
+fn update_privacy_preferences(
+    input: UpdatePrivacyPreferencesInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<PrivacyPreferences, String> {
+    with_store_mut(&state, |store| {
+        ProjectService::new(store).update_privacy_preferences(input)
+    })
 }
 
 fn authorize_intentional_marker(
@@ -185,8 +189,8 @@ fn record_intentional_capture(
     project_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<application::project_service::CaptureMarker, String> {
-    with_store(&state, |store| {
-        let privacy_mode = PrivacyMode::from_store(&store.privacy_mode()?)?;
+    with_store_mut(&state, |store| {
+        let privacy_mode = store.privacy_preferences()?.privacy_mode;
         let approved_project_id = authorize_intentional_marker(project_id, &privacy_mode)?;
         ProjectService::new(store).record_intentional_capture(approved_project_id)
     })
@@ -197,16 +201,20 @@ fn create_manual_capture(
     input: CreateManualCaptureInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<CaptureRecord, String> {
-    with_store(&state, |store| {
-        let privacy_mode = PrivacyMode::from_store(&store.privacy_mode()?)?;
+    with_store_mut(&state, |store| {
+        let privacy_mode = store.privacy_preferences()?.privacy_mode;
         let project_id = authorize_intentional_marker(input.project_id, &privacy_mode)?;
+        let retention = match input.retention {
+            Some(value) => Some(parse_capture_retention(value)?),
+            None => None,
+        };
         ProjectService::new(store).create_manual_capture(
             project_id,
             parse_capture_kind(input.kind)?,
             input.label,
             input.content,
             parse_capture_classification(input.classification)?,
-            parse_capture_retention(input.retention)?,
+            retention,
         )
     })
 }
@@ -216,7 +224,7 @@ fn list_decisions(
     project_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<DecisionClaim>, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).decisions_for_project(project_id)
     })
 }
@@ -226,7 +234,7 @@ fn create_decision(
     input: CreateDecisionInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<DecisionClaim, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).create_decision(
             input.project_id,
             input.title,
@@ -243,7 +251,7 @@ fn correct_decision(
     input: CreateDecisionInput,
     state: tauri::State<'_, AppState>,
 ) -> Result<DecisionClaim, String> {
-    with_store(&state, |store| {
+    with_store_mut(&state, |store| {
         ProjectService::new(store).correct_decision(
             input.project_id,
             decision_id,
@@ -252,6 +260,27 @@ fn correct_decision(
             parse_claim_confidence(input.confidence)?,
             input.source_labels,
         )
+    })
+}
+
+#[tauri::command]
+fn create_exclusion_rule(
+    input: CreateExclusionRuleInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExclusionRule, String> {
+    with_store_mut(&state, |store| {
+        ProjectService::new(store).create_exclusion_rule(input)
+    })
+}
+
+#[tauri::command]
+fn set_exclusion_enabled(
+    exclusion_id: String,
+    input: SetExclusionEnabledInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExclusionRule, String> {
+    with_store_mut(&state, |store| {
+        ProjectService::new(store).set_exclusion_enabled(&exclusion_id, input)
     })
 }
 
@@ -308,11 +337,15 @@ pub fn run() {
             update_project,
             archive_project,
             set_privacy_mode,
+            get_privacy_preferences,
+            update_privacy_preferences,
             record_intentional_capture,
             create_manual_capture,
             list_decisions,
             create_decision,
-            correct_decision
+            correct_decision,
+            create_exclusion_rule,
+            set_exclusion_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");
@@ -320,7 +353,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{authorize_intentional_marker, PrivacyMode};
+    use super::authorize_intentional_marker;
+    use crate::domain::settings::PrivacyMode;
 
     #[test]
     fn paused_privacy_mode_blocks_intentional_capture() {
@@ -335,10 +369,10 @@ mod tests {
     }
 
     #[test]
-    fn focused_privacy_mode_authorizes_a_manual_marker() {
+    fn manual_only_privacy_mode_authorizes_a_manual_marker() {
         let project_id =
-            authorize_intentional_marker("project-id".to_string(), &PrivacyMode::Focused)
-                .expect("focused mode should permit intentional capture");
+            authorize_intentional_marker("project-id".to_string(), &PrivacyMode::ManualOnly)
+                .expect("manual-only mode should permit intentional capture");
 
         assert_eq!(project_id, "project-id");
     }

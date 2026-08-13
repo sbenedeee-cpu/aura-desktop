@@ -114,6 +114,27 @@ pub const MIGRATIONS: &[Migration] = &[
                 ON decision_sources(project_id, created_at DESC);
         ",
     },
+    Migration {
+        version: 4,
+        name: "durable-privacy-controls-and-retention-defaults",
+        sql: "
+            UPDATE settings
+            SET value = 'manual_only', updated_at = updated_at
+            WHERE key = 'privacy_mode' AND value = 'focused';
+
+            CREATE TABLE exclusion_rules (
+                id TEXT PRIMARY KEY,
+                rule_type TEXT NOT NULL CHECK(rule_type IN ('application', 'domain', 'project')),
+                value TEXT NOT NULL,
+                is_enabled INTEGER NOT NULL CHECK(is_enabled IN (0, 1)) DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX exclusion_rules_type_created_at_idx
+                ON exclusion_rules(rule_type, created_at DESC);
+        ",
+    },
 ];
 
 pub fn run(connection: &mut Connection) -> Result<(), AuraError> {
