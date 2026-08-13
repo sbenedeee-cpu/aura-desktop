@@ -3,7 +3,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 
 import "./App.css";
 
 type PrivacyMode = "focused" | "paused";
-type View = "today" | "projects" | "capture";
+type View = "today" | "projects" | "capture" | "memory";
 
 type ProjectStatus = "active" | "paused" | "archived";
 
@@ -31,10 +31,36 @@ type ProjectListItem = {
 
 type WorkspaceSignal = {
   id: string;
-  kind: "context" | "project" | "system";
+  kind: "context" | "project" | "decision" | "system";
   title: string;
   detail: string;
   time: string;
+};
+
+type DecisionSummary = {
+  id: string;
+  title: string;
+  confidence: "low" | "medium" | "high";
+  status: "confirmed" | "superseded";
+  createdAt: string;
+};
+
+type DecisionClaim = DecisionSummary & {
+  projectId: string;
+  rationale: string;
+  authorType: "user";
+  updatedAt: string;
+  supersedesClaimId: string | null;
+  supersededByClaimId: string | null;
+  sources: { id: string; label: string; createdAt: string }[];
+};
+
+type DecisionDraft = {
+  projectId: string;
+  title: string;
+  rationale: string;
+  confidence: DecisionSummary["confidence"];
+  sourceLabels: string;
 };
 
 type WorkspaceSnapshot = {
@@ -42,6 +68,7 @@ type WorkspaceSnapshot = {
   selectedProject: Project | null;
   projects: ProjectListItem[];
   activity: WorkspaceSignal[];
+  decisions: DecisionSummary[];
 };
 
 type ProjectDraft = {
@@ -70,6 +97,7 @@ const emptySnapshot: WorkspaceSnapshot = {
   selectedProject: null,
   projects: [],
   activity: [],
+  decisions: [],
 };
 
 const navigation = [
@@ -194,6 +222,10 @@ function App() {
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [notice, setNotice] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [decisions, setDecisions] = useState<DecisionClaim[]>([]);
+  const [isLoadingDecisions, setIsLoadingDecisions] = useState(false);
+  const [isSavingDecision, setIsSavingDecision] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
 
   const selectedProject = snapshot.selectedProject;
 
@@ -225,6 +257,30 @@ function App() {
 
     return () => window.clearTimeout(deferredLoad);
   }, [loadWorkspace]);
+
+  const loadDecisions = useCallback(async (projectId: string) => {
+    setIsLoadingDecisions(true);
+    setDecisionError("");
+    try {
+      const records = await invoke<DecisionClaim[]>("list_decisions", { projectId });
+      setDecisions(records);
+    } catch {
+      setDecisions([]);
+      setDecisionError("Aura could not load this project’s local decision record.");
+    } finally {
+      setIsLoadingDecisions(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView !== "memory" || !selectedProject) {
+      return;
+    }
+    const deferredLoad = window.setTimeout(() => {
+      void loadDecisions(selectedProject.id);
+    }, 0);
+    return () => window.clearTimeout(deferredLoad);
+  }, [activeView, loadDecisions, selectedProject]);
 
   const continuity = useMemo(
     () => [
@@ -291,6 +347,37 @@ function App() {
     }
   }
 
+  async function saveDecision(draft: DecisionDraft, correctedDecisionId?: string) {
+    if (!draft.projectId) {
+      setDecisionError("Choose a local project before recording a decision.");
+      return false;
+    }
+    const sourceLabels = draft.sourceLabels
+      .split("\n")
+      .map((label) => label.trim())
+      .filter(Boolean);
+    setIsSavingDecision(true);
+    setDecisionError("");
+    try {
+      const input = { ...draft, sourceLabels };
+      if (correctedDecisionId) {
+        await invoke<DecisionClaim>("correct_decision", { decisionId: correctedDecisionId, input });
+        setNotice("Correction saved locally. The earlier decision remains visible as superseded.");
+      } else {
+        await invoke<DecisionClaim>("create_decision", { input });
+        setNotice("Decision saved locally with your stated basis.");
+      }
+      await Promise.all([loadWorkspace(), loadDecisions(draft.projectId)]);
+      return true;
+    } catch {
+      setDecisionError("Aura could not save this local decision. Review the fields and try again.");
+      return false;
+    } finally {
+      setIsSavingDecision(false);
+      dismissNotice();
+    }
+  }
+
   async function createProject(draft: Pick<ProjectDraft, "name" | "goal" | "nextStep">) {
     setIsCreatingProject(true);
     try {
@@ -352,13 +439,17 @@ function App() {
       ? "Continue with clarity."
       : activeView === "projects"
         ? "Projects"
-        : "Capture deliberately.";
+        : activeView === "capture"
+          ? "Capture deliberately."
+          : "Decision memory.";
   const subheading =
     activeView === "today"
       ? "Resume one deliberate thread at a time."
       : activeView === "projects"
         ? "Local projects, held in context."
-        : "Review exactly what Aura will keep before you save it.";
+        : activeView === "capture"
+          ? "Review exactly what Aura will keep before you save it."
+          : "Record what was decided, why, and what later replaced it.";
 
   return (
     <div className="continuity-desk">
@@ -373,7 +464,10 @@ function App() {
         <nav className="route-list" aria-label="Workspace routes">
           {navigation.map((item) => {
             const isAvailable =
-              item.id === "today" || item.id === "projects" || item.id === "capture";
+              item.id === "today" ||
+              item.id === "projects" ||
+              item.id === "capture" ||
+              item.id === "memory";
             const isActive = activeView === item.id;
             return (
               <button
@@ -423,7 +517,9 @@ function App() {
                 ? "TODAY"
                 : activeView === "projects"
                   ? "PROJECTS"
-                  : "CAPTURE"}
+                  : activeView === "capture"
+                    ? "CAPTURE"
+                    : "MEMORY"}
             </p>
             <h1>{heading}</h1>
             <p className="header-subtitle">{subheading}</p>
@@ -492,7 +588,7 @@ function App() {
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
           />
-        ) : (
+        ) : activeView === "capture" ? (
           <CaptureView
             isSaving={isSavingCapture}
             onCancel={() => setActiveView("today")}
@@ -502,6 +598,17 @@ function App() {
             projectOptions={snapshot.projects}
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
+          />
+        ) : (
+          <MemoryView
+            key={selectedProject?.id || "no-project"}
+            decisions={decisions}
+            error={decisionError}
+            isLoading={isLoadingDecisions}
+            isSaving={isSavingDecision}
+            onSave={saveDecision}
+            project={selectedProject}
+            projectOptions={snapshot.projects}
           />
         )}
       </main>
@@ -1303,3 +1410,231 @@ function LoadingDesk() {
 }
 
 export default App;
+
+function MemoryView({
+  decisions,
+  error,
+  isLoading,
+  isSaving,
+  onSave,
+  project,
+  projectOptions,
+}: {
+  decisions: DecisionClaim[];
+  error: string;
+  isLoading: boolean;
+  isSaving: boolean;
+  onSave: (draft: DecisionDraft, correctedDecisionId?: string) => Promise<boolean>;
+  project: Project | null;
+  projectOptions: ProjectListItem[];
+}) {
+  const [correcting, setCorrecting] = useState<DecisionClaim | null>(null);
+  const [draft, setDraft] = useState<DecisionDraft>({
+    projectId: project?.id || projectOptions[0]?.id || "",
+    title: "",
+    rationale: "",
+    confidence: "medium",
+    sourceLabels: "",
+  });
+  const [formError, setFormError] = useState("");
+
+  function beginCorrection(decision: DecisionClaim) {
+    setCorrecting(decision);
+    setDraft({
+      projectId: decision.projectId,
+      title: decision.title,
+      rationale: decision.rationale,
+      confidence: decision.confidence,
+      sourceLabels: decision.sources.map((source) => source.label).join("\n"),
+    });
+    setFormError("");
+  }
+
+  function cancelEditing() {
+    setCorrecting(null);
+    setDraft({
+      projectId: project?.id || "",
+      title: "",
+      rationale: "",
+      confidence: "medium",
+      sourceLabels: "",
+    });
+    setFormError("");
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.title.trim() || !draft.rationale.trim() || !draft.sourceLabels.trim()) {
+      setFormError("Decision, rationale, and at least one source or basis are required.");
+      return;
+    }
+    setFormError("");
+    const saved = await onSave(draft, correcting?.id);
+    if (saved) {
+      cancelEditing();
+    }
+  }
+
+  if (!project) {
+    return (
+      <section className="first-use" aria-labelledby="memory-empty-heading">
+        <p className="section-kicker">LOCAL MEMORY</p>
+        <h2 id="memory-empty-heading">A decision belongs to a project.</h2>
+        <p>
+          Create a local project before recording a decision, its rationale, or its supporting
+          basis.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <div className="memory-layout">
+      <section className="memory-form-sheet" aria-labelledby="memory-form-heading">
+        <p className="section-kicker">{correcting ? "CORRECT A DECISION" : "RECORD A DECISION"}</p>
+        <h2 id="memory-form-heading">
+          {correcting ? "Preserve the change." : "Keep the reason with the choice."}
+        </h2>
+        <p className="memory-intro">
+          {correcting
+            ? "Aura creates a new local version and marks the earlier record as superseded. Nothing is silently overwritten."
+            : `This decision is stored only in ${project.name}. Aura records it as your input, not an AI conclusion.`}
+        </p>
+        <form onSubmit={submit}>
+          <label className="field">
+            <span>Decision</span>
+            <input
+              maxLength={160}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, title: event.target.value }))
+              }
+              placeholder="What did you decide?"
+              value={draft.title}
+            />
+          </label>
+          <label className="field">
+            <span>Rationale</span>
+            <textarea
+              maxLength={4000}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, rationale: event.target.value }))
+              }
+              placeholder="Why is this the right decision for now?"
+              rows={4}
+              value={draft.rationale}
+            />
+          </label>
+          <div className="field-grid memory-fields">
+            <label className="field">
+              <span>Confidence</span>
+              <select
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    confidence: event.target.value as DecisionDraft["confidence"],
+                  }))
+                }
+                value={draft.confidence}
+              >
+                <option value="low">Low — needs more validation</option>
+                <option value="medium">Medium — reasonable current basis</option>
+                <option value="high">High — strong current basis</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Project</span>
+              <input disabled value={project.name} />
+            </label>
+          </div>
+          <label className="field">
+            <span>Source or basis</span>
+            <textarea
+              aria-describedby="decision-source-help"
+              maxLength={3000}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, sourceLabels: event.target.value }))
+              }
+              placeholder={
+                "One reference per line\nExample: ADR-003\nExample: Team conversation, 13 Aug"
+              }
+              rows={4}
+              value={draft.sourceLabels}
+            />
+            <small id="decision-source-help">
+              Add the references, observations, or conversations that informed this choice.
+            </small>
+          </label>
+          {(formError || error) && (
+            <p className="field-error" role="alert">
+              {formError || error}
+            </p>
+          )}
+          <div className="editor-actions">
+            <p>
+              <Icon name="shield" /> User-authored and stored in this local project.
+            </p>
+            <div className="inline-actions">
+              {correcting && (
+                <button className="outline-action" onClick={cancelEditing} type="button">
+                  Cancel
+                </button>
+              )}
+              <button className="primary-action" disabled={isSaving} type="submit">
+                {isSaving ? "Saving locally…" : correcting ? "Save correction" : "Save decision"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section className="decision-ledger" aria-labelledby="decision-ledger-heading">
+        <div className="ledger-heading">
+          <div>
+            <p className="section-kicker">{project.name.toUpperCase()}</p>
+            <h2 id="decision-ledger-heading">Decision ledger</h2>
+          </div>
+          <span>{decisions.length}</span>
+        </div>
+        {isLoading ? (
+          <p className="ledger-empty">Loading this project’s local decision record…</p>
+        ) : decisions.length === 0 ? (
+          <p className="ledger-empty">No decisions are recorded for this project yet.</p>
+        ) : (
+          <div className="decision-list">
+            {decisions.map((decision) => (
+              <article
+                className={`decision-card ${decision.status === "superseded" ? "is-superseded" : ""}`}
+                key={decision.id}
+              >
+                <div className="decision-card-topline">
+                  <span className={`confidence-chip confidence-${decision.confidence}`}>
+                    {decision.confidence} confidence
+                  </span>
+                  <time dateTime={decision.createdAt}>{formatTime(decision.createdAt)}</time>
+                </div>
+                <h3>{decision.title}</h3>
+                <p>{decision.rationale}</p>
+                <ul className="source-list" aria-label="Decision sources">
+                  {decision.sources.map((source) => (
+                    <li key={source.id}>{source.label}</li>
+                  ))}
+                </ul>
+                {decision.status === "superseded" ? (
+                  <p className="decision-state">Superseded by a newer local decision.</p>
+                ) : (
+                  <button
+                    className="text-link"
+                    onClick={() => beginCorrection(decision)}
+                    type="button"
+                  >
+                    Correct this decision
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

@@ -6,6 +6,7 @@ use application::project_service::{parse_project_status, ProjectService, Workspa
 use db::{repositories::projects::UpdateProject, LocalStore};
 use domain::{
     capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
+    claim::{ClaimConfidence, DecisionClaim},
     project::{AuraError, Project},
 };
 use serde::Deserialize;
@@ -67,6 +68,16 @@ struct CreateManualCaptureInput {
     content: String,
     classification: String,
     retention: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateDecisionInput {
+    project_id: String,
+    title: String,
+    rationale: String,
+    confidence: String,
+    source_labels: Vec<String>,
 }
 
 struct AppState {
@@ -200,6 +211,58 @@ fn create_manual_capture(
     })
 }
 
+#[tauri::command]
+fn list_decisions(
+    project_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DecisionClaim>, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).decisions_for_project(project_id)
+    })
+}
+
+#[tauri::command]
+fn create_decision(
+    input: CreateDecisionInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<DecisionClaim, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).create_decision(
+            input.project_id,
+            input.title,
+            input.rationale,
+            parse_claim_confidence(input.confidence)?,
+            input.source_labels,
+        )
+    })
+}
+
+#[tauri::command]
+fn correct_decision(
+    decision_id: String,
+    input: CreateDecisionInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<DecisionClaim, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).correct_decision(
+            input.project_id,
+            decision_id,
+            input.title,
+            input.rationale,
+            parse_claim_confidence(input.confidence)?,
+            input.source_labels,
+        )
+    })
+}
+
+fn parse_claim_confidence(value: String) -> Result<ClaimConfidence, AuraError> {
+    ClaimConfidence::from_store(&value).map_err(|_| {
+        AuraError::InvalidInput(
+            "Choose low, medium, or high confidence before saving a decision.".to_string(),
+        )
+    })
+}
+
 fn parse_capture_kind(value: String) -> Result<CaptureKind, AuraError> {
     CaptureKind::from_store(&value).map_err(|_| {
         AuraError::InvalidInput("Choose a supported manual capture type before saving.".to_string())
@@ -246,7 +309,10 @@ pub fn run() {
             archive_project,
             set_privacy_mode,
             record_intentional_capture,
-            create_manual_capture
+            create_manual_capture,
+            list_decisions,
+            create_decision,
+            correct_decision
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");

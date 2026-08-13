@@ -1,8 +1,9 @@
 use crate::db::{repositories::projects::ActivityRecord, LocalStore};
 use crate::{
-    db::repositories::captures::CreateCapture,
+    db::repositories::{captures::CreateCapture, claims::CreateDecision},
     domain::{
         capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
+        claim::{ClaimConfidence, DecisionClaim, DecisionSummary},
         project::{AuraError, Project, ProjectStatus},
     },
 };
@@ -15,6 +16,7 @@ pub struct WorkspaceSnapshot {
     pub selected_project: Option<Project>,
     pub projects: Vec<ProjectListItem>,
     pub activity: Vec<WorkspaceSignal>,
+    pub decisions: Vec<DecisionSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,6 +71,16 @@ impl<'store> ProjectService<'store> {
                 .collect(),
             None => Vec::new(),
         };
+        let decisions = match selected_id {
+            Some(project_id) => self
+                .store
+                .decisions()
+                .list_for_project(project_id)?
+                .iter()
+                .map(DecisionSummary::from)
+                .collect(),
+            None => Vec::new(),
+        };
 
         Ok(WorkspaceSnapshot {
             privacy_mode: self.store.privacy_mode()?,
@@ -78,6 +90,7 @@ impl<'store> ProjectService<'store> {
                 .collect(),
             selected_project,
             activity,
+            decisions,
         })
     }
 
@@ -156,6 +169,49 @@ impl<'store> ProjectService<'store> {
         })
     }
 
+    pub fn decisions_for_project(
+        &self,
+        project_id: String,
+    ) -> Result<Vec<DecisionClaim>, AuraError> {
+        self.store.decisions().list_for_project(&project_id)
+    }
+
+    pub fn create_decision(
+        &self,
+        project_id: String,
+        title: String,
+        rationale: String,
+        confidence: ClaimConfidence,
+        source_labels: Vec<String>,
+    ) -> Result<DecisionClaim, AuraError> {
+        self.store.decisions().create(CreateDecision {
+            project_id,
+            title,
+            rationale,
+            confidence,
+            source_labels,
+        })
+    }
+
+    pub fn correct_decision(
+        &self,
+        project_id: String,
+        decision_id: String,
+        title: String,
+        rationale: String,
+        confidence: ClaimConfidence,
+        source_labels: Vec<String>,
+    ) -> Result<DecisionClaim, AuraError> {
+        self.store.decisions().supersede(
+            project_id,
+            decision_id,
+            title,
+            rationale,
+            confidence,
+            source_labels,
+        )
+    }
+
     pub fn create_manual_capture(
         &self,
         project_id: String,
@@ -211,7 +267,7 @@ fn workspace_signal(record: ActivityRecord) -> WorkspaceSignal {
     WorkspaceSignal {
         id: record.id,
         kind: match record.kind.as_str() {
-            "project" | "context" | "system" => record.kind,
+            "project" | "context" | "decision" | "system" => record.kind,
             _ => "system".to_string(),
         },
         title: record.title,
