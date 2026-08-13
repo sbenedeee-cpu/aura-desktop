@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import App from "./App";
 import { invoke } from "@tauri-apps/api/core";
 import fs from "fs";
@@ -60,7 +60,11 @@ describe("Aura Frontend Privacy Boundary & Least Privilege Contracts", () => {
     });
 
     // Verify invokeMock was only called with approved API endpoints
-    const allowedCommands = ["get_workspace_snapshot", "set_privacy_mode", "record_intentional_capture"];
+    const allowedCommands = [
+      "get_workspace_snapshot",
+      "set_privacy_mode",
+      "record_intentional_capture",
+    ];
     invokeMock.mock.calls.forEach((call) => {
       expect(allowedCommands).toContain(call[0]);
     });

@@ -149,12 +149,18 @@ mod tests {
     fn test_failed_migration_rolls_back() {
         let mut conn = Connection::open_in_memory().unwrap();
         // Setup initial schema_migrations with version 1
-        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);", []).unwrap();
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", []).unwrap();
+        conn.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY);",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])
+            .unwrap();
 
         // Create a conflict table beforehand to trigger a migration failure
         // Version 2 tries to create `tasks` table, so let's create a conflicted `tasks` table
-        conn.execute("CREATE TABLE tasks (conflict_field INTEGER);", []).unwrap();
+        conn.execute("CREATE TABLE tasks (conflict_field INTEGER);", [])
+            .unwrap();
 
         // Applying migrations should fail because 'tasks' table already exists with a different schema.
         let result = apply_migrations(&mut conn);
@@ -162,7 +168,9 @@ mod tests {
 
         // Verify that schema_migrations is still at version 1 (rolled back completely)
         let current_version: usize = conn
-            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row.get(0))
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(current_version, 1);
     }
@@ -177,7 +185,11 @@ mod tests {
         {
             let mut conn = Connection::open(&db_path).unwrap();
             apply_migrations(&mut conn).unwrap();
-            conn.execute("INSERT INTO settings (key, value) VALUES ('theme', 'dark')", []).unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('theme', 'dark')",
+                [],
+            )
+            .unwrap();
         }
 
         // Simulate Corruption by writing gibberish to the db file
@@ -189,7 +201,10 @@ mod tests {
         let mut is_corrupt = false;
         if let Ok(ref conn) = conn_attempt {
             // Attempt to query
-            let query_res: Result<String> = conn.query_row("SELECT value FROM settings WHERE key='theme'", [], |row| row.get(0));
+            let query_res: Result<String> =
+                conn.query_row("SELECT value FROM settings WHERE key='theme'", [], |row| {
+                    row.get(0)
+                });
             if query_res.is_err() {
                 is_corrupt = true;
             }
@@ -205,16 +220,28 @@ mod tests {
             // Re-bootstrap fresh database
             let mut new_conn = Connection::open(&db_path).unwrap();
             apply_migrations(&mut new_conn).unwrap();
-            new_conn.execute("INSERT INTO settings (key, value) VALUES ('theme', 'recovered_default')", []).unwrap();
+            new_conn
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES ('theme', 'recovered_default')",
+                    [],
+                )
+                .unwrap();
         }
 
         // Assert backup file of corrupted data exists
         assert!(backup_path.exists());
-        assert_eq!(fs::read(&backup_path).unwrap(), b"CORRUPTED_SQLITE_HEADER_AND_GIBBERISH_DATA");
+        assert_eq!(
+            fs::read(&backup_path).unwrap(),
+            b"CORRUPTED_SQLITE_HEADER_AND_GIBBERISH_DATA"
+        );
 
         // Assert new database is healthy and initialized
         let restored_conn = Connection::open(&db_path).unwrap();
-        let val: String = restored_conn.query_row("SELECT value FROM settings WHERE key='theme'", [], |row| row.get(0)).unwrap();
+        let val: String = restored_conn
+            .query_row("SELECT value FROM settings WHERE key='theme'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(val, "recovered_default");
     }
 
@@ -224,15 +251,35 @@ mod tests {
         apply_migrations(&mut conn).unwrap();
 
         // Seed settings representing privacy options
-        conn.execute("INSERT INTO settings (key, value) VALUES ('privacy_mode', 'paused')", []).unwrap();
-        conn.execute("INSERT INTO settings (key, value) VALUES ('retention_default', 'until_deleted')", []).unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('privacy_mode', 'paused')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('retention_default', 'until_deleted')",
+            [],
+        )
+        .unwrap();
 
         // Ensure we retrieve privacy mode and it corresponds to correct policies
-        let mode: String = conn.query_row("SELECT value FROM settings WHERE key='privacy_mode'", [], |row| row.get(0)).unwrap();
+        let mode: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='privacy_mode'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(mode, "paused");
 
         // Verify that settings does not contain or permit raw unencrypted secrets
-        let rows_count: usize = conn.query_row("SELECT count(*) FROM settings WHERE value LIKE '%password%' OR value LIKE '%key%'", [], |row| row.get(0)).unwrap();
+        let rows_count: usize = conn
+            .query_row(
+                "SELECT count(*) FROM settings WHERE value LIKE '%password%' OR value LIKE '%key%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(rows_count, 0);
     }
 

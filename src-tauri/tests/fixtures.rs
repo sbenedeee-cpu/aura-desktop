@@ -41,7 +41,8 @@ pub fn get_mock_project_fixture() -> ProjectFixture {
     ProjectFixture {
         id: "aura".to_string(),
         name: "Aura Desktop".to_string(),
-        goal: "Convert validated architecture shell into a trustworthy local-first system".to_string(),
+        goal: "Convert validated architecture shell into a trustworthy local-first system"
+            .to_string(),
         status: "In progress".to_string(),
         current_task: "Implement safe DB persistence and tests".to_string(),
         blocker: "Awaiting approval of ADR-003".to_string(),
