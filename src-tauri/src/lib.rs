@@ -100,6 +100,16 @@ fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, Stri
 }
 
 #[tauri::command]
+fn select_project(
+    project_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Project, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).select_project(project_id)
+    })
+}
+
+#[tauri::command]
 fn update_project(
     project_id: String,
     input: UpdateProjectInput,
@@ -178,6 +188,7 @@ pub fn run() {
             get_workspace_snapshot,
             create_project,
             list_projects,
+            select_project,
             update_project,
             archive_project,
             set_privacy_mode,

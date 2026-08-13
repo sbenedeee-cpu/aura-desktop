@@ -223,39 +223,32 @@ impl<'connection> ProjectRepository<'connection> {
         Ok(now)
     }
 
-    pub fn activity(&self) -> Result<Vec<ActivityRecord>, AuraError> {
+    pub fn activity_for_project(&self, project_id: &str) -> Result<Vec<ActivityRecord>, AuraError> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT id, kind, title, detail, created_at
                  FROM activity_records
+                 WHERE project_id = ?1
                  ORDER BY created_at DESC, id DESC
                  LIMIT 6",
             )
             .map_err(|error| {
                 AuraError::Storage(format!(
-                    "Aura could not prepare local activity history: {error}"
+                    "Aura could not prepare the project local record: {error}"
                 ))
             })?;
         let rows = statement
-            .query_map([], |row| {
-                Ok(ActivityRecord {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    title: row.get(2)?,
-                    detail: row.get(3)?,
-                    created_at: row.get(4)?,
-                })
-            })
+            .query_map([project_id], activity_record_from_row)
             .map_err(|error| {
                 AuraError::Storage(format!(
-                    "Aura could not read local activity history: {error}"
+                    "Aura could not read the project local record: {error}"
                 ))
             })?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
             AuraError::Storage(format!(
-                "Aura could not decode local activity history: {error}"
+                "Aura could not decode the project local record: {error}"
             ))
         })
     }
@@ -309,6 +302,16 @@ pub struct ActivityRecord {
     pub title: String,
     pub detail: String,
     pub created_at: String,
+}
+
+fn activity_record_from_row(row: &Row<'_>) -> rusqlite::Result<ActivityRecord> {
+    Ok(ActivityRecord {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        detail: row.get(3)?,
+        created_at: row.get(4)?,
+    })
 }
 
 fn project_from_row(row: &Row<'_>) -> rusqlite::Result<Project> {

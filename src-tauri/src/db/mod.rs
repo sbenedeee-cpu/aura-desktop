@@ -71,15 +71,49 @@ impl LocalStore {
     }
 
     pub fn set_privacy_mode(&self, mode: &str) -> Result<(), AuraError> {
+        self.set_setting("privacy_mode", mode)
+    }
+
+    pub fn selected_project_id(&self) -> Result<Option<String>, AuraError> {
+        self.connection
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'selected_project_id'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| {
+                AuraError::Storage(format!(
+                    "Aura could not read the selected local project: {error}"
+                ))
+            })
+    }
+
+    pub fn set_selected_project_id(&self, project_id: &str) -> Result<(), AuraError> {
+        self.set_setting("selected_project_id", project_id)
+    }
+
+    pub fn clear_selected_project_id(&self) -> Result<(), AuraError> {
+        self.connection
+            .execute("DELETE FROM settings WHERE key = 'selected_project_id'", [])
+            .map_err(|error| {
+                AuraError::Storage(format!(
+                    "Aura could not clear the selected local project: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+
+    fn set_setting(&self, key: &str, value: &str) -> Result<(), AuraError> {
         self.connection
             .execute(
                 "INSERT INTO settings (key, value, updated_at)
-                 VALUES ('privacy_mode', ?1, ?2)
+                 VALUES (?1, ?2, ?3)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                params![mode, migrations::utc_timestamp()],
+                params![key, value, migrations::utc_timestamp()],
             )
             .map_err(|error| {
-                AuraError::Storage(format!("Aura could not update its local privacy setting: {error}"))
+                AuraError::Storage(format!("Aura could not update its local workspace setting: {error}"))
             })?;
         Ok(())
     }
