@@ -1,21 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 type PrivacyMode = "focused" | "paused";
+type SignalKind = "context" | "decision" | "memory" | "system" | "project";
 
 type Project = {
   id: string;
   name: string;
   status: string;
   signal: string;
-  progress: number;
   updatedAt: string;
 };
 
 type Signal = {
   id: string;
-  kind: "context" | "decision" | "memory";
+  kind: SignalKind;
   title: string;
   detail: string;
   time: string;
@@ -30,89 +30,58 @@ type WorkspaceSnapshot = {
   signals: Signal[];
 };
 
-const fallbackSnapshot: WorkspaceSnapshot = {
-  activeProject: "Aura Desktop",
+const emptySnapshot: WorkspaceSnapshot = {
+  activeProject: "No local project selected",
   continuityNote:
-    "The architecture scaffold is active. Capture remains intentional while the Windows perception contract is being verified.",
-  nextStep: "Define the first user-authorized context capture flow.",
+    "Aura is waiting for its local workspace to load. No desktop capture, cloud sync, or AI provider is enabled.",
+  nextStep: "Create a local project to begin an intentional continuity record.",
   privacyMode: "focused",
-  projects: [
-    {
-      id: "aura",
-      name: "Aura Desktop",
-      status: "In progress",
-      signal: "Architecture baseline",
-      progress: 24,
-      updatedAt: "Now",
-    },
-    {
-      id: "ascend",
-      name: "Ascend",
-      status: "Paused",
-      signal: "Awaiting scope review",
-      progress: 58,
-      updatedAt: "Yesterday",
-    },
-    {
-      id: "eternal",
-      name: "Eternal Studios",
-      status: "Active",
-      signal: "Brand-system decisions",
-      progress: 72,
-      updatedAt: "2 days ago",
-    },
-  ],
-  signals: [
-    {
-      id: "signal-1",
-      kind: "decision",
-      title: "Windows-first stack selected",
-      detail: "Tauri 2, React, TypeScript, and Rust establish the initial desktop boundary.",
-      time: "Just now",
-    },
-    {
-      id: "signal-2",
-      kind: "context",
-      title: "Intentional capture is active",
-      detail:
-        "Aura will not observe or send desktop context until an explicit capture workflow exists.",
-      time: "Today",
-    },
-    {
-      id: "signal-3",
-      kind: "memory",
-      title: "Research mandate linked",
-      detail:
-        "The saved master research mandate is the source of truth for product and technical decisions.",
-      time: "Today",
-    },
-  ],
+  projects: [],
+  signals: [],
 };
 
 const navigation = ["Now", "Projects", "Memory", "Cortex", "Controls"];
 
 function App() {
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(fallbackSnapshot);
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(emptySnapshot);
   const [activeView, setActiveView] = useState("Now");
   const [isLoading, setIsLoading] = useState(true);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isSavingPrivacy, setIsSavingPrivacy] = useState(false);
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [projectName, setProjectName] = useState("");
   const [notice, setNotice] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  const dismissNotice = useCallback(() => {
+    window.setTimeout(() => setNotice(""), 2600);
+  }, []);
+
+  const loadWorkspace = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError("");
+
+    try {
+      const loaded = await invoke<WorkspaceSnapshot>("get_workspace_snapshot");
+      setSnapshot(loaded);
+    } catch {
+      setSnapshot(emptySnapshot);
+      setLoadError(
+        "Aura could not open the local workspace. Your existing records were not changed. Try again, or restart Aura to recover the local database connection.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    async function loadWorkspace() {
-      try {
-        const loaded = await invoke<WorkspaceSnapshot>("get_workspace_snapshot");
-        setSnapshot(loaded);
-      } catch {
-        // The visual shell is intentionally useful before the local service layer is complete.
-        setSnapshot(fallbackSnapshot);
-      } finally {
-        setIsLoading(false);
-      }
-    }
+    const deferredLoad = window.setTimeout(() => {
+      void loadWorkspace();
+    }, 0);
 
-    void loadWorkspace();
-  }, []);
+    return () => window.clearTimeout(deferredLoad);
+  }, [loadWorkspace]);
 
   const activeProject = useMemo(
     () =>
@@ -123,36 +92,68 @@ function App() {
 
   async function togglePrivacyMode() {
     const nextMode: PrivacyMode = snapshot.privacyMode === "focused" ? "paused" : "focused";
-    setSnapshot((current) => ({ ...current, privacyMode: nextMode }));
+    setIsSavingPrivacy(true);
 
     try {
       await invoke("set_privacy_mode", { mode: nextMode });
+      setSnapshot((current) => ({ ...current, privacyMode: nextMode }));
+      setNotice(nextMode === "focused" ? "Intentional capture ready" : "All capture paused");
     } catch {
-      // Local optimistic state keeps the demonstration shell usable when the command layer is unavailable.
+      setNotice("Aura could not update the local privacy setting");
+    } finally {
+      setIsSavingPrivacy(false);
+      dismissNotice();
     }
-
-    setNotice(nextMode === "focused" ? "Intentional capture ready" : "All capture paused");
-    window.setTimeout(() => setNotice(""), 2600);
   }
 
   async function captureContext() {
     if (snapshot.privacyMode === "paused") {
       setNotice("Resume intentional capture before adding context");
-      window.setTimeout(() => setNotice(""), 2600);
+      dismissNotice();
+      return;
+    }
+
+    if (!activeProject) {
+      setNotice("Create or select a local project before adding context");
+      dismissNotice();
       return;
     }
 
     setIsCapturing(true);
     try {
-      await invoke("record_intentional_capture", { projectId: activeProject?.id ?? "aura" });
+      await invoke("record_intentional_capture", { projectId: activeProject.id });
+      await loadWorkspace();
       setNotice("Context marker saved locally");
     } catch {
-      setNotice("Capture workflow is connected but not yet enabled on this device");
+      setNotice("Aura could not save the local context marker");
     } finally {
-      window.setTimeout(() => {
-        setIsCapturing(false);
-        setNotice("");
-      }, 1800);
+      setIsCapturing(false);
+      dismissNotice();
+    }
+  }
+
+  async function createProject(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = projectName.trim();
+    if (!name) {
+      setNotice("Enter a project name before saving");
+      dismissNotice();
+      return;
+    }
+
+    setIsCreatingProject(true);
+    try {
+      const project = await invoke<Project>("create_project", { input: { name } });
+      setProjectName("");
+      setShowProjectForm(false);
+      await loadWorkspace();
+      setSnapshot((current) => ({ ...current, activeProject: project.name }));
+      setNotice("Project saved locally");
+    } catch {
+      setNotice("Aura could not save the local project");
+    } finally {
+      setIsCreatingProject(false);
+      dismissNotice();
     }
   }
 
@@ -196,8 +197,17 @@ function App() {
                 ? "Aura only receives context you explicitly allow."
                 : "No context is being collected or queued."}
             </p>
-            <button className="text-button" onClick={togglePrivacyMode} type="button">
-              {snapshot.privacyMode === "focused" ? "Pause capture" : "Resume capture"}
+            <button
+              className="text-button"
+              disabled={isSavingPrivacy}
+              onClick={togglePrivacyMode}
+              type="button"
+            >
+              {isSavingPrivacy
+                ? "Updating…"
+                : snapshot.privacyMode === "focused"
+                  ? "Pause capture"
+                  : "Resume capture"}
             </button>
           </div>
           <p className="build-label">WINDOWS V0 · 0.1.0</p>
@@ -216,9 +226,9 @@ function App() {
             <span className="local-badge">Local-first</span>
             <button
               className="capture-button"
+              disabled={isCapturing || !activeProject}
               onClick={captureContext}
               type="button"
-              disabled={isCapturing}
             >
               {isCapturing ? "Saving context…" : "Add context"}
             </button>
@@ -228,6 +238,15 @@ function App() {
         {notice && (
           <div className="notice" role="status">
             {notice}
+          </div>
+        )}
+
+        {loadError && (
+          <div className="notice error-notice" role="alert">
+            <span>{loadError}</span>
+            <button className="text-button" onClick={() => void loadWorkspace()} type="button">
+              Try again
+            </button>
           </div>
         )}
 
@@ -255,38 +274,59 @@ function App() {
               </div>
               <button
                 className="panel-action"
+                onClick={() => setShowProjectForm((current) => !current)}
                 type="button"
-                onClick={() => setActiveView("Projects")}
               >
-                View all
+                {showProjectForm ? "Cancel" : "New project"}
               </button>
             </div>
+
+            {showProjectForm && (
+              <form className="project-create-form" onSubmit={createProject}>
+                <label htmlFor="project-name">Project name</label>
+                <div className="project-create-controls">
+                  <input
+                    autoFocus
+                    id="project-name"
+                    maxLength={120}
+                    onChange={(event) => setProjectName(event.target.value)}
+                    placeholder="e.g. Ascend"
+                    value={projectName}
+                  />
+                  <button className="panel-action" disabled={isCreatingProject} type="submit">
+                    {isCreatingProject ? "Saving…" : "Save locally"}
+                  </button>
+                </div>
+              </form>
+            )}
+
             <div className="project-list">
-              {snapshot.projects.map((project) => (
-                <button
-                  className="project-row"
-                  key={project.id}
-                  type="button"
-                  onClick={() =>
-                    setSnapshot((current) => ({ ...current, activeProject: project.name }))
-                  }
-                >
-                  <div className="project-name-block">
-                    <span className="project-dot" aria-hidden="true" />
-                    <div>
-                      <strong>{project.name}</strong>
-                      <span>{project.signal}</span>
+              {snapshot.projects.length === 0 ? (
+                <p className="empty-state">No local projects yet. Create one to begin.</p>
+              ) : (
+                snapshot.projects.map((project) => (
+                  <button
+                    className="project-row"
+                    key={project.id}
+                    onClick={() =>
+                      setSnapshot((current) => ({ ...current, activeProject: project.name }))
+                    }
+                    type="button"
+                  >
+                    <div className="project-name-block">
+                      <span className="project-dot" aria-hidden="true" />
+                      <div>
+                        <strong>{project.name}</strong>
+                        <span>{project.signal}</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="project-progress-block">
-                    <span>{project.status}</span>
-                    <div className="progress-track" aria-label={`${project.progress}% complete`}>
-                      <div className="progress-fill" style={{ width: `${project.progress}%` }} />
+                    <div className="project-progress-block">
+                      <span>{project.status}</span>
                     </div>
-                  </div>
-                  <time>{project.updatedAt}</time>
-                </button>
-              ))}
+                    <time>{project.updatedAt}</time>
+                  </button>
+                ))
+              )}
             </div>
           </article>
 
@@ -298,20 +338,24 @@ function App() {
               </div>
               <span className="signal-count">{snapshot.signals.length}</span>
             </div>
-            <ol className="signal-list">
-              {snapshot.signals.map((signal) => (
-                <li className="signal-item" key={signal.id}>
-                  <span className={`signal-icon ${signal.kind}`} aria-hidden="true">
-                    {signal.kind.slice(0, 1).toUpperCase()}
-                  </span>
-                  <div>
-                    <strong>{signal.title}</strong>
-                    <p>{signal.detail}</p>
-                    <time>{signal.time}</time>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            {snapshot.signals.length === 0 ? (
+              <p className="empty-state">No local activity has been recorded yet.</p>
+            ) : (
+              <ol className="signal-list">
+                {snapshot.signals.map((signal) => (
+                  <li className="signal-item" key={signal.id}>
+                    <span className={`signal-icon ${signal.kind}`} aria-hidden="true">
+                      {signal.kind.slice(0, 1).toUpperCase()}
+                    </span>
+                    <div>
+                      <strong>{signal.title}</strong>
+                      <p>{signal.detail}</p>
+                      <time>{signal.time}</time>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
           </article>
         </section>
 

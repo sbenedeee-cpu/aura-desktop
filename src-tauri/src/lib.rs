@@ -1,190 +1,185 @@
-use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+mod application;
+mod db;
+mod domain;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
+use db::{repositories::projects::UpdateProject, LocalStore};
+use domain::project::{AuraError, Project};
+use serde::Deserialize;
+use std::sync::Mutex;
+use tauri::Manager;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum PrivacyMode {
     Focused,
     Paused,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Project {
-    id: String,
-    name: String,
-    status: String,
-    signal: String,
-    progress: u8,
-    updated_at: String,
-}
+impl PrivacyMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Focused => "focused",
+            Self::Paused => "paused",
+        }
+    }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Signal {
-    id: String,
-    kind: String,
-    title: String,
-    detail: String,
-    time: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceSnapshot {
-    active_project: String,
-    continuity_note: String,
-    next_step: String,
-    privacy_mode: PrivacyMode,
-    projects: Vec<Project>,
-    signals: Vec<Signal>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CaptureMarker {
-    project_id: String,
-    captured_at: String,
-    source: String,
-}
-
-struct AppState {
-    privacy_mode: Mutex<PrivacyMode>,
-    capture_markers: Mutex<Vec<CaptureMarker>>,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            privacy_mode: Mutex::new(PrivacyMode::Focused),
-            capture_markers: Mutex::new(Vec::new()),
+    fn from_store(value: &str) -> Result<Self, AuraError> {
+        match value {
+            "focused" => Ok(Self::Focused),
+            "paused" => Ok(Self::Paused),
+            _ => Err(AuraError::Storage(
+                "Aura found an unsupported local privacy mode.".to_string(),
+            )),
         }
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateProjectInput {
+    name: String,
+    goal: Option<String>,
+    current_task: Option<String>,
+    next_step: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProjectInput {
+    name: Option<String>,
+    goal: Option<String>,
+    status: Option<String>,
+    current_task: Option<String>,
+    blocker: Option<String>,
+    next_step: Option<String>,
+}
+
+struct AppState {
+    store: Mutex<LocalStore>,
+}
+
+fn with_store<T>(
+    state: &tauri::State<'_, AppState>,
+    operation: impl FnOnce(&LocalStore) -> Result<T, AuraError>,
+) -> Result<T, String> {
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| "Aura could not access its local workspace safely.".to_string())?;
+    operation(&store).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn get_workspace_snapshot(state: tauri::State<'_, AppState>) -> Result<WorkspaceSnapshot, String> {
-    let privacy_mode = state
-        .privacy_mode
-        .lock()
-        .map_err(|_| "Aura could not read its local privacy state.".to_string())?
-        .clone();
+    with_store(&state, |store| {
+        let snapshot = ProjectService::new(store).workspace_snapshot()?;
+        PrivacyMode::from_store(&snapshot.privacy_mode)?;
+        Ok(snapshot)
+    })
+}
 
-    Ok(WorkspaceSnapshot {
-        active_project: "Aura Desktop".to_string(),
-        continuity_note: "The architecture scaffold is active. Capture remains intentional while the Windows perception contract is being verified.".to_string(),
-        next_step: "Define the first user-authorized context capture flow.".to_string(),
-        privacy_mode,
-        projects: vec![
-            Project {
-                id: "aura".to_string(),
-                name: "Aura Desktop".to_string(),
-                status: "In progress".to_string(),
-                signal: "Architecture baseline".to_string(),
-                progress: 24,
-                updated_at: "Now".to_string(),
+#[tauri::command]
+fn create_project(
+    input: CreateProjectInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<Project, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).create_project(
+            input.name,
+            input.goal,
+            input.current_task,
+            input.next_step,
+        )
+    })
+}
+
+#[tauri::command]
+fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
+    with_store(&state, |store| store.projects().list_active())
+}
+
+#[tauri::command]
+fn update_project(
+    project_id: String,
+    input: UpdateProjectInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<Project, String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).update_project(
+            project_id,
+            UpdateProject {
+                name: input.name,
+                goal: input.goal,
+                status: parse_project_status(input.status)?,
+                current_task: input.current_task,
+                blocker: input.blocker,
+                next_step: input.next_step,
             },
-            Project {
-                id: "ascend".to_string(),
-                name: "Ascend".to_string(),
-                status: "Paused".to_string(),
-                signal: "Awaiting scope review".to_string(),
-                progress: 58,
-                updated_at: "Yesterday".to_string(),
-            },
-            Project {
-                id: "eternal".to_string(),
-                name: "Eternal Studios".to_string(),
-                status: "Active".to_string(),
-                signal: "Brand-system decisions".to_string(),
-                progress: 72,
-                updated_at: "2 days ago".to_string(),
-            },
-        ],
-        signals: vec![
-            Signal {
-                id: "signal-1".to_string(),
-                kind: "decision".to_string(),
-                title: "Windows-first stack selected".to_string(),
-                detail: "Tauri 2, React, TypeScript, and Rust establish the initial desktop boundary.".to_string(),
-                time: "Just now".to_string(),
-            },
-            Signal {
-                id: "signal-2".to_string(),
-                kind: "context".to_string(),
-                title: "Intentional capture is active".to_string(),
-                detail: "Aura will not observe or send desktop context until an explicit capture workflow exists.".to_string(),
-                time: "Today".to_string(),
-            },
-            Signal {
-                id: "signal-3".to_string(),
-                kind: "memory".to_string(),
-                title: "Research mandate linked".to_string(),
-                detail: "The saved master research mandate is the source of truth for product and technical decisions.".to_string(),
-                time: "Today".to_string(),
-            },
-        ],
+        )
+    })
+}
+
+#[tauri::command]
+fn archive_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    with_store(&state, |store| {
+        ProjectService::new(store).archive_project(project_id)
     })
 }
 
 #[tauri::command]
 fn set_privacy_mode(mode: PrivacyMode, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut privacy_mode = state
-        .privacy_mode
-        .lock()
-        .map_err(|_| "Aura could not update its local privacy state.".to_string())?;
-
-    *privacy_mode = mode;
-    Ok(())
+    with_store(&state, |store| store.set_privacy_mode(mode.as_str()))
 }
 
-fn build_capture_marker(
+fn authorize_intentional_marker(
     project_id: String,
     privacy_mode: &PrivacyMode,
-) -> Result<CaptureMarker, String> {
+) -> Result<String, AuraError> {
     if matches!(privacy_mode, PrivacyMode::Paused) {
-        return Err("Intentional capture is paused. Resume it before adding context.".to_string());
+        return Err(AuraError::Privacy(
+            "Intentional capture is paused. Resume it before adding context.".to_string(),
+        ));
     }
 
-    Ok(CaptureMarker {
-        project_id,
-        captured_at: "local-session".to_string(),
-        source: "manual-context-marker".to_string(),
-    })
+    Ok(project_id)
 }
 
 #[tauri::command]
 fn record_intentional_capture(
     project_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<CaptureMarker, String> {
-    let privacy_mode = state
-        .privacy_mode
-        .lock()
-        .map_err(|_| "Aura could not read its local privacy state.".to_string())?
-        .clone();
-
-    let marker = build_capture_marker(project_id, &privacy_mode)?;
-
-    state
-        .capture_markers
-        .lock()
-        .map_err(|_| "Aura could not save the local context marker.".to_string())?
-        .push(CaptureMarker {
-            project_id: marker.project_id.clone(),
-            captured_at: marker.captured_at.clone(),
-            source: marker.source.clone(),
-        });
-
-    Ok(marker)
+) -> Result<application::project_service::CaptureMarker, String> {
+    with_store(&state, |store| {
+        let privacy_mode = PrivacyMode::from_store(&store.privacy_mode()?)?;
+        let approved_project_id = authorize_intentional_marker(project_id, &privacy_mode)?;
+        ProjectService::new(store).record_intentional_capture(approved_project_id)
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .setup(|app| {
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            std::fs::create_dir_all(&data_dir)?;
+
+            let store = LocalStore::open(&data_dir.join("aura.sqlite3"))
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            app.manage(AppState {
+                store: Mutex::new(store),
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_workspace_snapshot,
+            create_project,
+            list_projects,
+            update_project,
+            archive_project,
             set_privacy_mode,
             record_intentional_capture
         ])
@@ -194,24 +189,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_capture_marker, PrivacyMode};
+    use super::{authorize_intentional_marker, PrivacyMode};
 
     #[test]
     fn paused_privacy_mode_blocks_intentional_capture() {
-        let result = build_capture_marker("aura".to_string(), &PrivacyMode::Paused);
+        let result = authorize_intentional_marker("project-id".to_string(), &PrivacyMode::Paused);
 
         assert_eq!(
-            result.unwrap_err(),
+            result
+                .expect_err("paused mode must reject capture")
+                .to_string(),
             "Intentional capture is paused. Resume it before adding context."
         );
     }
 
     #[test]
-    fn focused_privacy_mode_creates_a_manual_marker() {
-        let marker = build_capture_marker("aura".to_string(), &PrivacyMode::Focused)
-            .expect("focused mode should permit intentional capture");
+    fn focused_privacy_mode_authorizes_a_manual_marker() {
+        let project_id =
+            authorize_intentional_marker("project-id".to_string(), &PrivacyMode::Focused)
+                .expect("focused mode should permit intentional capture");
 
-        assert_eq!(marker.project_id, "aura");
-        assert_eq!(marker.source, "manual-context-marker");
+        assert_eq!(project_id, "project-id");
     }
 }

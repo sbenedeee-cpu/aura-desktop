@@ -6,15 +6,15 @@ Aura is a **privacy-first Windows desktop AI coordination system**. It is being 
 
 ## Current Foundation
 
-The initial repository includes a Tauri 2 application with a React and TypeScript workspace, a Rust-native command layer, an intentional-capture privacy state machine, and an opinionated project dashboard. The application currently contains sample local workspace data so the product shell and command boundary can be exercised without requesting sensitive Windows permissions.
+The repository includes a Tauri 2 application with a React and TypeScript workspace, a Rust-native command layer, an intentional-capture privacy state machine, and an opinionated project dashboard. Project records, privacy settings, manual context markers, and activity history are now stored through a Rust-owned local SQLite boundary; the renderer never opens the database or constructs SQL.
 
 | Area | Initial status |
 |---|---|
 | Windows desktop shell | Implemented with Tauri 2 |
-| Project continuity workspace | Implemented with local sample state |
+| Project continuity workspace | Implemented with durable local SQLite records |
 | Privacy mode | Implemented; capture can be paused and resumed |
 | Manual context marker | Implemented as a local native command |
-| SQLite local store | Planned next |
+| SQLite local store | Implemented with numbered, transactional migrations |
 | Active-window metadata | Planned after consent and exclusions design |
 | Screen capture and OCR | Explicitly excluded from V0 |
 | AI provider and cloud sync | Explicitly excluded from V0 |
@@ -55,6 +55,12 @@ pnpm quality
 
 The suite checks renderer formatting, linting, TypeScript, tests, and production build output; it also checks Rust formatting, Clippy warnings, native unit tests, and high-severity production JavaScript dependency advisories. GitHub Actions runs the same renderer and native checks on pull requests and pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for individual commands, privacy-sensitive change rules, and troubleshooting.
 
+## Local Storage and Recovery
+
+Aura opens a single `aura.sqlite3` database in the operating system’s Tauri application-data directory for the current user. The database contains only product records: projects, privacy settings, manual context markers, activity history, and migration metadata. It does not collect screenshots, clipboard contents, microphone audio, access tokens, provider credentials, or unapproved desktop captures.
+
+Migrations are numbered, append-only, and applied inside a SQLite transaction. If a migration fails, Aura does not reset the database; it reports that the prior records were left unchanged so the user can restart an updated build or retain a copy of the database before further recovery work. The Windows DPAPI-wrapped data-encryption-key proof of concept remains required before Aura ships persisted user data beyond this controlled V0 engineering milestone. See [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) for the governing decision.
+
 ## Repository Guide
 
 ```text
@@ -74,8 +80,8 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Next Build Increment
 
-The next safe implementation slice is **durable local project memory**, but only after the product owner approves [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md). ENG-002 will then add a SQLite repository for projects, decisions, context markers, settings, and retention controls with migration and key-handling tests. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, or computer-use actions until their individual product and security designs are approved.
+The next safe implementation slice is **Windows DPAPI key-wrapping and encrypted-storage compatibility proof of concept**, as required by [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before shipping persisted user data. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 
-Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), and proposed [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before adding native system access or data persistence.
+Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), and accepted [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before adding native system access or data persistence.

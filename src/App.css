@@ -599,3 +599,78 @@ h3 {
     flex-direction: column;
   }
 }
+
+.error-notice {
+  width: min(740px, calc(100% - 48px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-color: rgba(244, 179, 110, 0.34);
+  border-radius: 14px;
+  color: #ffe0bf;
+}
+
+.project-create-form {
+  margin-top: 18px;
+  padding: 13px;
+  border: 1px solid rgba(199, 166, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(119, 74, 212, 0.08);
+}
+.project-create-form label {
+  display: block;
+  margin-bottom: 7px;
+  color: #bdb1ca;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.project-create-controls {
+  display: flex;
+  gap: 10px;
+}
+.project-create-controls input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(232, 222, 255, 0.16);
+  border-radius: 9px;
+  padding: 9px 10px;
+  color: #f7f1ff;
+  background: rgba(11, 9, 17, 0.62);
+  font: inherit;
+  font-size: 12px;
+}
+.project-create-controls input::placeholder {
+  color: #776f84;
+}
+.project-create-controls input:focus {
+  outline: 2px solid #ad7dff;
+  outline-offset: 2px;
+}
+.project-create-controls .panel-action {
+  flex: none;
+  padding: 0 2px;
+}
+.empty-state {
+  margin: 18px 0 0;
+  padding: 17px 0;
+  border-top: 1px solid rgba(231, 224, 247, 0.08);
+  border-bottom: 1px solid rgba(231, 224, 247, 0.08);
+  color: #978ea5;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.signal-icon.system,
+.signal-icon.project {
+  color: #f0c990;
+  background: rgba(201, 150, 70, 0.18);
+}
+
+@media (max-width: 1120px) {
+  .project-create-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

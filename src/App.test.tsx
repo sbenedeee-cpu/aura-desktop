@@ -10,12 +10,29 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const invokeMock = vi.mocked(invoke);
 
+const persistedWorkspace = {
+  activeProject: "Aura Desktop",
+  continuityNote: "Local persistence is active.",
+  nextStep: "Record context intentionally.",
+  privacyMode: "focused" as const,
+  projects: [
+    {
+      id: "aura",
+      name: "Aura Desktop",
+      status: "In progress",
+      signal: "Local-first continuity baseline",
+      updatedAt: "Now",
+    },
+  ],
+  signals: [],
+};
+
 describe("Aura privacy boundary", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command) => {
       if (command === "get_workspace_snapshot") {
-        return Promise.reject(new Error("Native command layer unavailable in renderer test"));
+        return Promise.resolve(persistedWorkspace);
       }
 
       return Promise.resolve(undefined);
