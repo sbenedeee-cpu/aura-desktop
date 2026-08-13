@@ -11,23 +11,41 @@ vi.mock("@tauri-apps/api/core", () => ({
 const invokeMock = vi.mocked(invoke);
 
 const persistedWorkspace = {
-  activeProject: "Aura Desktop",
-  continuityNote: "Local persistence is active.",
-  nextStep: "Record context intentionally.",
   privacyMode: "focused" as const,
+  selectedProject: {
+    id: "aura",
+    name: "Aura Desktop",
+    goal: "Ship a trustworthy local-first desktop app",
+    status: "active" as const,
+    currentTask: "Refine the continuity desk",
+    blocker: null,
+    nextStep: "Review the project brief",
+    createdAt: "2026-08-13T10:00:00Z",
+    updatedAt: "2026-08-13T10:00:00Z",
+    archivedAt: null,
+  },
   projects: [
     {
       id: "aura",
       name: "Aura Desktop",
-      status: "In progress",
-      signal: "Local-first continuity baseline",
-      updatedAt: "Now",
+      status: "Active",
+      nextStep: "Review the project brief",
+      updatedAt: "2026-08-13T10:00:00Z",
+      isSelected: true,
+    },
+    {
+      id: "eternal",
+      name: "Eternal Studios",
+      status: "Active",
+      nextStep: null,
+      updatedAt: "2026-08-12T10:00:00Z",
+      isSelected: false,
     },
   ],
-  signals: [],
+  activity: [],
 };
 
-describe("Aura privacy boundary", () => {
+describe("Aura Continuity Desk privacy boundary", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     invokeMock.mockImplementation((command) => {
@@ -39,24 +57,38 @@ describe("Aura privacy boundary", () => {
     });
   });
 
-  it("blocks intentional capture while paused and does not invoke the capture command", async () => {
+  it("blocks intentional context while paused and never invokes the capture command", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Pause capture" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Pause manual context" })).toBeEnabled();
     });
 
-    await user.click(screen.getByRole("button", { name: "Pause capture" }));
+    await user.click(screen.getByRole("button", { name: "Pause manual context" }));
 
-    expect(screen.getByText("Capture paused")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resume capture" })).toBeEnabled();
+    expect(screen.getByText("Manual context is paused")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume manual context" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add context marker" })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Add context" }));
+    await user.click(screen.getByRole("button", { name: "Add context marker" }));
 
-    expect(
-      screen.getByText("Resume intentional capture before adding context"),
-    ).toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalledWith("record_intentional_capture", expect.anything());
+  });
+
+  it("uses the typed selected-project command when a different local project is chosen", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Projects" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+    await user.click(screen.getByRole("button", { name: /Eternal Studios/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("select_project", { projectId: "eternal" });
+    });
   });
 });
