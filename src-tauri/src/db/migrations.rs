@@ -8,55 +8,76 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial-local-project-workspace",
-    sql: "
-        CREATE TABLE projects (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            goal TEXT,
-            status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'archived')) DEFAULT 'active',
-            current_task TEXT,
-            blocker TEXT,
-            next_step TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            archived_at TEXT
-        );
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial-local-project-workspace",
+        sql: "
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                goal TEXT,
+                status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'archived')) DEFAULT 'active',
+                current_task TEXT,
+                blocker TEXT,
+                next_step TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                archived_at TEXT
+            );
 
-        CREATE INDEX projects_active_updated_at_idx
-            ON projects(status, updated_at DESC);
+            CREATE INDEX projects_active_updated_at_idx
+                ON projects(status, updated_at DESC);
 
-        CREATE TABLE settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
+            CREATE TABLE settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
 
-        CREATE TABLE context_markers (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            source TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
+            CREATE TABLE context_markers (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
 
-        CREATE INDEX context_markers_project_created_at_idx
-            ON context_markers(project_id, created_at DESC);
+            CREATE INDEX context_markers_project_created_at_idx
+                ON context_markers(project_id, created_at DESC);
 
-        CREATE TABLE activity_records (
-            id TEXT PRIMARY KEY,
-            project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-            kind TEXT NOT NULL,
-            title TEXT NOT NULL,
-            detail TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
+            CREATE TABLE activity_records (
+                id TEXT PRIMARY KEY,
+                project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
 
-        CREATE INDEX activity_records_created_at_idx
-            ON activity_records(created_at DESC);
-    ",
-}];
+            CREATE INDEX activity_records_created_at_idx
+                ON activity_records(created_at DESC);
+        ",
+    },
+    Migration {
+        version: 2,
+        name: "project-scoped-manual-captures",
+        sql: "
+            CREATE TABLE captures (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK(kind IN ('manual_note', 'pasted_text', 'url')),
+                label TEXT NOT NULL,
+                content TEXT NOT NULL,
+                classification TEXT NOT NULL CHECK(classification IN ('standard', 'sensitive')),
+                retention TEXT NOT NULL CHECK(retention IN ('until_deleted', 'review_in_30_days')),
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX captures_project_created_at_idx
+                ON captures(project_id, created_at DESC);
+        ",
+    },
+];
 
 pub fn run(connection: &mut Connection) -> Result<(), AuraError> {
     let transaction = connection.transaction().map_err(|error| {

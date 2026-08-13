@@ -4,7 +4,10 @@ mod domain;
 
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
 use db::{repositories::projects::UpdateProject, LocalStore};
-use domain::project::{AuraError, Project};
+use domain::{
+    capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
+    project::{AuraError, Project},
+};
 use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -53,6 +56,17 @@ struct UpdateProjectInput {
     current_task: Option<String>,
     blocker: Option<String>,
     next_step: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateManualCaptureInput {
+    project_id: String,
+    kind: String,
+    label: String,
+    content: String,
+    classification: String,
+    retention: String,
 }
 
 struct AppState {
@@ -167,6 +181,45 @@ fn record_intentional_capture(
     })
 }
 
+#[tauri::command]
+fn create_manual_capture(
+    input: CreateManualCaptureInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<CaptureRecord, String> {
+    with_store(&state, |store| {
+        let privacy_mode = PrivacyMode::from_store(&store.privacy_mode()?)?;
+        let project_id = authorize_intentional_marker(input.project_id, &privacy_mode)?;
+        ProjectService::new(store).create_manual_capture(
+            project_id,
+            parse_capture_kind(input.kind)?,
+            input.label,
+            input.content,
+            parse_capture_classification(input.classification)?,
+            parse_capture_retention(input.retention)?,
+        )
+    })
+}
+
+fn parse_capture_kind(value: String) -> Result<CaptureKind, AuraError> {
+    CaptureKind::from_store(&value).map_err(|_| {
+        AuraError::InvalidInput("Choose a supported manual capture type before saving.".to_string())
+    })
+}
+
+fn parse_capture_classification(value: String) -> Result<CaptureClassification, AuraError> {
+    CaptureClassification::from_store(&value).map_err(|_| {
+        AuraError::InvalidInput(
+            "Choose a supported capture classification before saving.".to_string(),
+        )
+    })
+}
+
+fn parse_capture_retention(value: String) -> Result<CaptureRetention, AuraError> {
+    CaptureRetention::from_store(&value).map_err(|_| {
+        AuraError::InvalidInput("Choose a supported retention setting before saving.".to_string())
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -192,7 +245,8 @@ pub fn run() {
             update_project,
             archive_project,
             set_privacy_mode,
-            record_intentional_capture
+            record_intentional_capture,
+            create_manual_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");

@@ -57,7 +57,7 @@ describe("Aura Continuity Desk privacy boundary", () => {
     });
   });
 
-  it("blocks intentional context while paused and never invokes the capture command", async () => {
+  it("blocks explicit capture while paused and never invokes the capture command", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -66,14 +66,45 @@ describe("Aura Continuity Desk privacy boundary", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Pause manual context" }));
+    await user.click(screen.getByRole("button", { name: "Capture" }));
 
-    expect(screen.getByText("Manual context is paused")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resume manual context" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Add context marker" })).toBeDisabled();
+    expect(screen.getByText("Manual capture is paused.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review before saving/i })).toBeDisabled();
+    expect(invokeMock).not.toHaveBeenCalledWith("create_manual_capture", expect.anything());
+  });
 
-    await user.click(screen.getByRole("button", { name: "Add context marker" }));
+  it("requires review then sends only the typed capture draft to the native command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
 
-    expect(invokeMock).not.toHaveBeenCalledWith("record_intentional_capture", expect.anything());
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Capture" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Capture" }));
+    await user.type(screen.getByLabelText("Label"), "Architecture decision");
+    await user.type(screen.getByLabelText(/^Content/), "Use a Rust-owned persistence boundary.");
+    await user.click(screen.getByRole("button", { name: /Review before saving/i }));
+
+    expect(
+      screen.getByText("Here is the exact local record Aura will create."),
+    ).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("create_manual_capture", expect.anything());
+
+    await user.click(screen.getByRole("button", { name: /Confirm and save locally/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_manual_capture", {
+        input: {
+          projectId: "aura",
+          kind: "manual_note",
+          label: "Architecture decision",
+          content: "Use a Rust-owned persistence boundary.",
+          classification: "standard",
+          retention: "until_deleted",
+        },
+      });
+    });
   });
 
   it("uses the typed selected-project command when a different local project is chosen", async () => {

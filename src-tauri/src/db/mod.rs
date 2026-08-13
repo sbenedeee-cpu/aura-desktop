@@ -122,6 +122,10 @@ impl LocalStore {
         repositories::projects::ProjectRepository::new(&self.connection)
     }
 
+    pub fn captures(&self) -> repositories::captures::CaptureRepository<'_> {
+        repositories::captures::CaptureRepository::new(&self.connection)
+    }
+
     #[cfg(test)]
     pub fn schema_version(&self) -> Result<i64, AuraError> {
         current_version(&self.connection)
@@ -137,7 +141,7 @@ mod tests {
     fn migration_creates_an_empty_local_workspace() {
         let store = LocalStore::open_in_memory().expect("test database should migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(store.schema_version().expect("schema version"), 2);
         assert_eq!(store.privacy_mode().expect("privacy mode"), "focused");
         assert!(store.projects().list_active().expect("projects").is_empty());
     }
@@ -153,7 +157,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count");
-        assert_eq!(applied_count, 1);
+        assert_eq!(applied_count, 2);
     }
 
     #[test]
