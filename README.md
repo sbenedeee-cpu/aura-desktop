@@ -8,27 +8,28 @@ Aura is a **privacy-first Windows desktop AI coordination system**. It is being 
 
 The repository includes a Tauri 2 application with a React and TypeScript workspace, a Rust-native command layer, an intentional-capture privacy state machine, and a project-resumption workspace. Project records, selected-project state, explicit manual captures, user-authored decisions with stated provenance, privacy settings, and project-scoped activity history are stored through a Rust-owned local SQLite boundary; the renderer never opens the database or constructs SQL.
 
-| Area | Initial status |
-|---|---|
-| Windows desktop shell | Implemented with Tauri 2 |
-| Project continuity workspace | Implemented with durable local SQLite records |
-| Privacy mode | Implemented; capture can be paused and resumed |
-| Explicit manual capture | Implemented with review-before-save, classification, retention, project scope, cancellation, and a native paused-mode block |
-| Decision memory | Implemented with user-authored provenance, confidence, project-scoped retrieval, and non-destructive correction/supersession |
-| SQLite local store | Implemented with numbered, transactional migrations |
-| Active-window metadata | Planned after consent and exclusions design |
-| Screen capture and OCR | Explicitly excluded from V0 |
-| AI provider and cloud sync | Explicitly excluded from V0 |
+| Area                         | Initial status                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Windows desktop shell        | Implemented with Tauri 2                                                                                                     |
+| Project continuity workspace | Implemented with durable local SQLite records                                                                                |
+| Privacy mode                 | Implemented; manual-only and paused modes are persisted locally and can be toggled at any time                               |
+| Durable privacy controls     | Implemented: stored default capture retention resolved in Rust, exclusion rules stored as future policy preparation          |
+| Explicit manual capture      | Implemented with review-before-save, classification, retention, project scope, cancellation, and a native paused-mode block  |
+| Decision memory              | Implemented with user-authored provenance, confidence, project-scoped retrieval, and non-destructive correction/supersession |
+| SQLite local store           | Implemented with numbered, transactional migrations                                                                          |
+| Active-window metadata       | Planned after consent and exclusions design                                                                                  |
+| Screen capture and OCR       | Explicitly excluded from V0                                                                                                  |
+| AI provider and cloud sync   | Explicitly excluded from V0                                                                                                  |
 
 ## Technology Stack
 
-| Layer | Technology |
-|---|---|
-| Desktop application | Tauri 2 |
-| User interface | React 19, TypeScript, Vite |
-| Native core | Rust |
-| Package manager | pnpm |
-| Initial target | Windows 10/11 |
+| Layer               | Technology                 |
+| ------------------- | -------------------------- |
+| Desktop application | Tauri 2                    |
+| User interface      | React 19, TypeScript, Vite |
+| Native core         | Rust                       |
+| Package manager     | pnpm                       |
+| Initial target      | Windows 10/11              |
 
 ## Run Locally on Windows
 
@@ -56,6 +57,19 @@ pnpm quality
 
 The suite checks renderer formatting, linting, TypeScript, tests, and production build output; it also checks Rust formatting, Clippy warnings, native unit tests, and high-severity production JavaScript dependency advisories. GitHub Actions runs the same renderer and native checks on pull requests and pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for individual commands, privacy-sensitive change rules, and troubleshooting.
 
+## Privacy Settings Workspace
+
+Aura exposes a dedicated **Settings** surface in the desktop sidebar. Every control below is stored only in the local workspace and is read and written through typed Rust commands; the renderer never opens the database or constructs SQL.
+
+| Control                   | Behavior                                                                                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual-only mode          | The default: Aura saves only a note, pasted text, or URL that the user deliberately reviews and confirms before it is stored                                                    |
+| Paused mode               | Blocks context markers and manual capture entirely until the user explicitly resumes manual-only mode                                                                           |
+| Default capture retention | A stored local default (`until_deleted` or `review_in_30_days`) that Rust resolves whenever a manual capture is saved without an explicit retention value                       |
+| Exclusion rules           | Saved locally as an explicit product boundary for a later, separately approved feature; no observation adapter is active in V0 and no application is monitored or blocked today |
+
+The Settings page states plainly that Aura V0 performs no passive observation, screenshots, clipboard reading, microphone access, background collection, or network sync. Exclusion rules exist only as future-policy preparation.
+
 ## Local Storage and Recovery
 
 Aura opens a single `aura.sqlite3` database in the operating system’s Tauri application-data directory for the current user. The database contains only product records: projects, selected-project state, privacy settings, explicit manual captures, user-authored decision claims and their stated sources, activity history, and migration metadata. It does not collect screenshots, clipboard contents, microphone audio, access tokens, provider credentials, or unapproved desktop captures.
@@ -81,7 +95,7 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Next Build Increment
 
-The next product increment is **settings, local export, and recovery controls**. The **Windows DPAPI key-wrapping and encrypted-storage compatibility proof of concept** remains a mandatory release-security gate under [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before Aura ships persisted user data. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
+The next product increment is **local export and recovery controls**. The **Windows DPAPI key-wrapping and encrypted-storage compatibility proof of concept** remains a mandatory release-security gate under [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) before Aura ships persisted user data. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 

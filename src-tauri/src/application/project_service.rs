@@ -5,6 +5,10 @@ use crate::{
         capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
         claim::{ClaimConfidence, DecisionClaim, DecisionSummary},
         project::{AuraError, Project, ProjectStatus},
+        settings::{
+            CreateExclusionRuleInput, ExclusionRule, PrivacyMode, PrivacyPreferences,
+            SetExclusionEnabledInput, UpdatePrivacyPreferencesInput,
+        },
     },
 };
 use serde::Serialize;
@@ -12,7 +16,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
-    pub privacy_mode: String,
+    pub privacy_mode: PrivacyMode,
     pub selected_project: Option<Project>,
     pub projects: Vec<ProjectListItem>,
     pub activity: Vec<WorkspaceSignal>,
@@ -49,11 +53,11 @@ pub struct CaptureMarker {
 }
 
 pub struct ProjectService<'store> {
-    store: &'store LocalStore,
+    store: &'store mut LocalStore,
 }
 
 impl<'store> ProjectService<'store> {
-    pub fn new(store: &'store LocalStore) -> Self {
+    pub fn new(store: &'store mut LocalStore) -> Self {
         Self { store }
     }
 
@@ -83,7 +87,7 @@ impl<'store> ProjectService<'store> {
         };
 
         Ok(WorkspaceSnapshot {
-            privacy_mode: self.store.privacy_mode()?,
+            privacy_mode: self.store.privacy_preferences()?.privacy_mode,
             projects: projects
                 .iter()
                 .map(|project| project_list_item(project, selected_id))
@@ -219,16 +223,47 @@ impl<'store> ProjectService<'store> {
         label: String,
         content: String,
         classification: CaptureClassification,
-        retention: CaptureRetention,
+        retention: Option<CaptureRetention>,
     ) -> Result<CaptureRecord, AuraError> {
+        let resolved_retention = retention.unwrap_or_else(|| {
+            self.store
+                .default_capture_retention()
+                .unwrap_or(CaptureRetention::UntilDeleted)
+        });
         self.store.captures().create(CreateCapture {
             project_id,
             kind,
             label,
             content,
             classification,
-            retention,
+            retention: resolved_retention,
         })
+    }
+
+    pub fn privacy_preferences(&self) -> Result<PrivacyPreferences, AuraError> {
+        self.store.privacy_preferences()
+    }
+
+    pub fn update_privacy_preferences(
+        &mut self,
+        input: UpdatePrivacyPreferencesInput,
+    ) -> Result<PrivacyPreferences, AuraError> {
+        self.store.update_privacy_preferences(input)
+    }
+
+    pub fn create_exclusion_rule(
+        &self,
+        input: CreateExclusionRuleInput,
+    ) -> Result<ExclusionRule, AuraError> {
+        self.store.create_exclusion_rule(input.kind, input.value)
+    }
+
+    pub fn set_exclusion_enabled(
+        &self,
+        exclusion_id: &str,
+        input: SetExclusionEnabledInput,
+    ) -> Result<ExclusionRule, AuraError> {
+        self.store.set_exclusion_enabled(exclusion_id, input)
     }
 
     fn resolve_selected_project(&self, projects: &[Project]) -> Result<Option<Project>, AuraError> {
@@ -296,8 +331,8 @@ mod tests {
 
     #[test]
     fn selected_project_persists_and_scopes_the_workspace_record() {
-        let store = LocalStore::open_in_memory().expect("test database should migrate");
-        let service = ProjectService::new(&store);
+        let mut store = LocalStore::open_in_memory().expect("test database should migrate");
+        let service = ProjectService::new(&mut store);
         let first = service
             .create_project(
                 "Aura Desktop".to_string(),
@@ -334,7 +369,7 @@ mod tests {
             .iter()
             .any(|signal| signal.title == "Project created locally"));
 
-        let reloaded = ProjectService::new(&store)
+        let reloaded = ProjectService::new(&mut store)
             .workspace_snapshot()
             .expect("selected project should survive a new service");
         assert_eq!(

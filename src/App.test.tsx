@@ -10,8 +10,23 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 const invokeMock = vi.mocked(invoke);
 
+const persistedPreferences = {
+  privacyMode: "manual_only" as const,
+  defaultCaptureRetention: "until_deleted" as const,
+  exclusions: [
+    {
+      id: "ex-1",
+      kind: "application" as const,
+      value: "BankingApp",
+      isEnabled: true,
+      createdAt: "2026-08-13T10:00:00Z",
+      updatedAt: "2026-08-13T10:00:00Z",
+    },
+  ],
+};
+
 const persistedWorkspace = {
-  privacyMode: "focused" as const,
+  privacyMode: "manual_only" as const,
   selectedProject: {
     id: "aura",
     name: "Aura Desktop",
@@ -49,9 +64,18 @@ const persistedWorkspace = {
 describe("Aura Continuity Desk privacy boundary", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    invokeMock.mockImplementation((command) => {
+    invokeMock.mockImplementation((command, payload) => {
       if (command === "get_workspace_snapshot") {
         return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "get_privacy_preferences") {
+        return Promise.resolve(persistedPreferences);
+      }
+      if (command === "update_privacy_preferences") {
+        return Promise.resolve({
+          ...persistedPreferences,
+          privacyMode: (payload as { input: { privacyMode: string } }).input.privacyMode,
+        });
       }
       if (command === "list_decisions") {
         return Promise.resolve([]);
@@ -105,7 +129,7 @@ describe("Aura Continuity Desk privacy boundary", () => {
           label: "Architecture decision",
           content: "Use a Rust-owned persistence boundary.",
           classification: "standard",
-          retention: "until_deleted",
+          retention: undefined,
         },
       });
     });
@@ -155,5 +179,122 @@ describe("Aura Continuity Desk privacy boundary", () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("select_project", { projectId: "eternal" });
     });
+  });
+});
+
+describe("Aura local privacy preferences", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_workspace_snapshot") {
+        return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "get_privacy_preferences") {
+        return Promise.resolve(persistedPreferences);
+      }
+      if (command === "list_decisions") {
+        return Promise.resolve([]);
+      }
+
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it("opens the local privacy settings workspace and shows future-ready exclusion copy", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "You set the boundary." })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Aura V0 has no passive observation adapter/)).toBeInTheDocument();
+    expect(screen.getByText("BankingApp")).toBeInTheDocument();
+  });
+
+  it("saves the manual-only mode and default retention through the typed preferences command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("radio", { name: /Manual only/i })).toBeInTheDocument();
+    });
+
+    const retentionSelect = screen.getByRole("combobox", {
+      name: "Default capture retention",
+    });
+    await user.selectOptions(retentionSelect, "review_in_30_days");
+    await user.click(screen.getByRole("button", { name: "Save privacy preferences" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("update_privacy_preferences", {
+        input: { privacyMode: "manual_only", defaultCaptureRetention: "review_in_30_days" },
+      });
+    });
+  });
+
+  it("registers a future exclusion rule with explicit future-policy framing", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Exclusion value")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText("Exclusion value"), "vault.local");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Exclusion rule type" }),
+      "domain",
+    );
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("create_exclusion_rule", {
+        input: { kind: "domain", value: "vault.local" },
+      });
+    });
+
+    expect(screen.getByText(/Future exclusion rule saved locally/)).toBeInTheDocument();
+  });
+
+  it("rejects an empty exclusion value without invoking the native command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Exclusion value")).toBeInTheDocument();
+    });
+
+    await user.clear(screen.getByLabelText("Exclusion value"));
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+
+    expect(
+      screen.getByText("Enter the application, domain, or project name to exclude."),
+    ).toBeInTheDocument();
+    expect(invokeMock).not.toHaveBeenCalledWith("create_exclusion_rule", expect.anything());
   });
 });

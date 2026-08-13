@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-type PrivacyMode = "focused" | "paused";
-type View = "today" | "projects" | "capture" | "memory";
+type PrivacyMode = "manual_only" | "paused";
+type View = "today" | "projects" | "capture" | "memory" | "settings";
 
 type ProjectStatus = "active" | "paused" | "archived";
 
@@ -89,11 +89,28 @@ type CaptureDraft = {
   label: string;
   content: string;
   classification: CaptureClassification;
-  retention: CaptureRetention;
+  retention?: CaptureRetention;
+};
+
+type ExclusionKind = "application" | "domain" | "project";
+
+type ExclusionRule = {
+  id: string;
+  kind: ExclusionKind;
+  value: string;
+  isEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PrivacyPreferences = {
+  privacyMode: PrivacyMode;
+  defaultCaptureRetention: CaptureRetention;
+  exclusions: ExclusionRule[];
 };
 
 const emptySnapshot: WorkspaceSnapshot = {
-  privacyMode: "focused",
+  privacyMode: "manual_only",
   selectedProject: null,
   projects: [],
   activity: [],
@@ -175,6 +192,12 @@ function Icon({ name }: { name: string }) {
       </>
     ),
     chevron: <path d="m9 7 5 5-5 5" {...common} />,
+    lock: (
+      <>
+        <rect height="10" rx="1.8" width="13" x="5.5" y="10" {...common} />
+        <path d="M8 10V7.8a4 4 0 0 1 8 0V10M12 14v2" {...common} />
+      </>
+    ),
   };
 
   return (
@@ -203,9 +226,13 @@ function formatTime(value: string) {
 }
 
 function privacyCopy(mode: PrivacyMode) {
-  return mode === "focused"
+  return mode === "manual_only"
     ? "Manual only — no background capture"
     : "Paused — no context is collected or queued";
+}
+
+function retentionLabel(retention: CaptureRetention) {
+  return retention === "until_deleted" ? "Until deleted" : "Review in 30 days";
 }
 
 function App() {
@@ -226,6 +253,10 @@ function App() {
   const [isLoadingDecisions, setIsLoadingDecisions] = useState(false);
   const [isSavingDecision, setIsSavingDecision] = useState(false);
   const [decisionError, setDecisionError] = useState("");
+  const [privacyPreferences, setPrivacyPreferences] = useState<PrivacyPreferences | null>(null);
+  const [isLoadingPreferences, setIsLoadingPreferences] = useState(false);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
 
   const selectedProject = snapshot.selectedProject;
 
@@ -257,6 +288,32 @@ function App() {
 
     return () => window.clearTimeout(deferredLoad);
   }, [loadWorkspace]);
+
+  const loadPrivacyPreferences = useCallback(async () => {
+    setIsLoadingPreferences(true);
+    setSettingsError("");
+    try {
+      const preferences = await invoke<PrivacyPreferences>("get_privacy_preferences");
+      setPrivacyPreferences(preferences);
+    } catch {
+      setPrivacyPreferences(null);
+      setSettingsError(
+        "Aura could not load local privacy preferences. Existing records were not changed.",
+      );
+    } finally {
+      setIsLoadingPreferences(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView !== "settings") {
+      return;
+    }
+    const deferredLoad = window.setTimeout(() => {
+      void loadPrivacyPreferences();
+    }, 0);
+    return () => window.clearTimeout(deferredLoad);
+  }, [activeView, loadPrivacyPreferences]);
 
   const loadDecisions = useCallback(async (projectId: string) => {
     setIsLoadingDecisions(true);
@@ -292,19 +349,92 @@ function App() {
     [selectedProject],
   );
 
-  async function togglePrivacyMode() {
-    const nextMode: PrivacyMode = snapshot.privacyMode === "focused" ? "paused" : "focused";
-    setIsSavingPrivacy(true);
+  async function savePrivacyPreferences(
+    privacyMode: PrivacyMode,
+    defaultCaptureRetention: CaptureRetention,
+    source: "sidebar" | "settings" = "settings",
+  ) {
+    if (source === "sidebar") {
+      setIsSavingPrivacy(true);
+    } else {
+      setIsSavingPreferences(true);
+      setSettingsError("");
+    }
 
     try {
-      await invoke("set_privacy_mode", { mode: nextMode });
-      setSnapshot((current) => ({ ...current, privacyMode: nextMode }));
-      setNotice(nextMode === "focused" ? "Manual context is ready" : "Manual context is paused");
+      const preferences = await invoke<PrivacyPreferences>("update_privacy_preferences", {
+        input: { privacyMode, defaultCaptureRetention },
+      });
+
+      if (!preferences) {
+        throw new Error("Aura received an empty preferences record after saving locally.");
+      }
+
+      setPrivacyPreferences(preferences);
+      setSnapshot((current) => ({ ...current, privacyMode: preferences.privacyMode }));
+      setNotice(
+        preferences.privacyMode === "manual_only"
+          ? "Manual-only capture is ready locally"
+          : "Manual capture is paused locally",
+      );
+      return true;
     } catch {
-      setNotice("Aura could not update the local privacy setting");
+      const message = "Aura could not update the local privacy preferences.";
+      if (source === "settings") {
+        setSettingsError(message);
+      } else {
+        setNotice(message);
+      }
+      return false;
     } finally {
-      setIsSavingPrivacy(false);
+      if (source === "sidebar") {
+        setIsSavingPrivacy(false);
+      } else {
+        setIsSavingPreferences(false);
+      }
       dismissNotice();
+    }
+  }
+
+  async function togglePrivacyMode() {
+    const nextMode: PrivacyMode = snapshot.privacyMode === "manual_only" ? "paused" : "manual_only";
+    await savePrivacyPreferences(
+      nextMode,
+      privacyPreferences?.defaultCaptureRetention || "until_deleted",
+      "sidebar",
+    );
+  }
+
+  async function addExclusion(kind: ExclusionKind, value: string) {
+    setIsSavingPreferences(true);
+    setSettingsError("");
+    try {
+      await invoke<ExclusionRule>("create_exclusion_rule", { input: { kind, value } });
+      await loadPrivacyPreferences();
+      setNotice("Future exclusion rule saved locally. No observation adapter is active.");
+      return true;
+    } catch {
+      setSettingsError("Aura could not save that local exclusion rule.");
+      return false;
+    } finally {
+      setIsSavingPreferences(false);
+      dismissNotice();
+    }
+  }
+
+  async function changeExclusionState(exclusionId: string, isEnabled: boolean) {
+    setIsSavingPreferences(true);
+    setSettingsError("");
+    try {
+      await invoke<ExclusionRule>("set_exclusion_enabled", {
+        exclusionId,
+        input: { isEnabled },
+      });
+      await loadPrivacyPreferences();
+    } catch {
+      setSettingsError("Aura could not update that local exclusion rule.");
+    } finally {
+      setIsSavingPreferences(false);
     }
   }
 
@@ -441,7 +571,9 @@ function App() {
         ? "Projects"
         : activeView === "capture"
           ? "Capture deliberately."
-          : "Decision memory.";
+          : activeView === "memory"
+            ? "Decision memory."
+            : "Privacy settings.";
   const subheading =
     activeView === "today"
       ? "Resume one deliberate thread at a time."
@@ -449,7 +581,9 @@ function App() {
         ? "Local projects, held in context."
         : activeView === "capture"
           ? "Review exactly what Aura will keep before you save it."
-          : "Record what was decided, why, and what later replaced it.";
+          : activeView === "memory"
+            ? "Record what was decided, why, and what later replaced it."
+            : "Choose how deliberate local capture behaves on this device.";
 
   return (
     <div className="continuity-desk">
@@ -467,7 +601,8 @@ function App() {
               item.id === "today" ||
               item.id === "projects" ||
               item.id === "capture" ||
-              item.id === "memory";
+              item.id === "memory" ||
+              item.id === "settings";
             const isActive = activeView === item.id;
             return (
               <button
@@ -490,7 +625,7 @@ function App() {
         <div className="privacy-panel">
           <div className="privacy-panel-heading">
             <Icon name="shield" />
-            <span>{snapshot.privacyMode === "focused" ? "Manual only" : "Paused"}</span>
+            <span>{snapshot.privacyMode === "manual_only" ? "Manual only" : "Paused"}</span>
           </div>
           <p>{privacyCopy(snapshot.privacyMode)}</p>
           <button
@@ -501,7 +636,7 @@ function App() {
           >
             {isSavingPrivacy
               ? "Updating…"
-              : snapshot.privacyMode === "focused"
+              : snapshot.privacyMode === "manual_only"
                 ? "Pause manual context"
                 : "Resume manual context"}
           </button>
@@ -519,7 +654,9 @@ function App() {
                   ? "PROJECTS"
                   : activeView === "capture"
                     ? "CAPTURE"
-                    : "MEMORY"}
+                    : activeView === "memory"
+                      ? "MEMORY"
+                      : "SETTINGS"}
             </p>
             <h1>{heading}</h1>
             <p className="header-subtitle">{subheading}</p>
@@ -573,6 +710,7 @@ function App() {
             continuity={continuity}
             onOpenProject={() => setActiveView("projects")}
             onSelectProject={selectProject}
+            privacyMode={snapshot.privacyMode}
             projectOptions={snapshot.projects}
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
@@ -590,6 +728,7 @@ function App() {
           />
         ) : activeView === "capture" ? (
           <CaptureView
+            defaultRetention={privacyPreferences?.defaultCaptureRetention || "until_deleted"}
             isSaving={isSavingCapture}
             onCancel={() => setActiveView("today")}
             onSave={createManualCapture}
@@ -599,7 +738,7 @@ function App() {
             selectedProject={selectedProject}
             selectionBusy={isSelectingProject}
           />
-        ) : (
+        ) : activeView === "memory" ? (
           <MemoryView
             key={selectedProject?.id || "no-project"}
             decisions={decisions}
@@ -609,6 +748,17 @@ function App() {
             onSave={saveDecision}
             project={selectedProject}
             projectOptions={snapshot.projects}
+          />
+        ) : (
+          <SettingsView
+            error={settingsError}
+            isLoading={isLoadingPreferences}
+            isSaving={isSavingPreferences}
+            onAddExclusion={addExclusion}
+            onReload={() => void loadPrivacyPreferences()}
+            onSavePreferences={savePrivacyPreferences}
+            onToggleExclusion={changeExclusionState}
+            preferences={privacyPreferences}
           />
         )}
       </main>
@@ -637,6 +787,7 @@ function TodayView({
   continuity,
   onOpenProject,
   onSelectProject,
+  privacyMode,
   projectOptions,
   selectedProject,
   selectionBusy,
@@ -645,6 +796,7 @@ function TodayView({
   continuity: { label: string; value: string }[];
   onOpenProject: () => void;
   onSelectProject: (projectId: string) => Promise<void>;
+  privacyMode: PrivacyMode;
   projectOptions: ProjectListItem[];
   selectedProject: Project | null;
   selectionBusy: boolean;
@@ -715,7 +867,7 @@ function TodayView({
           </dl>
           <div className="sheet-footer">
             <span>
-              <Icon name="shield" /> {privacyCopy("focused")}
+              <Icon name="shield" /> {privacyCopy(privacyMode)}
             </span>
             <time dateTime={selectedProject.updatedAt}>
               Last local change {formatTime(selectedProject.updatedAt)}
@@ -940,6 +1092,7 @@ function ProjectEditor({
 }
 
 function CaptureView({
+  defaultRetention,
   isSaving,
   onCancel,
   onSave,
@@ -949,6 +1102,7 @@ function CaptureView({
   selectedProject,
   selectionBusy,
 }: {
+  defaultRetention: CaptureRetention;
   isSaving: boolean;
   onCancel: () => void;
   onSave: (draft: CaptureDraft) => Promise<boolean>;
@@ -964,7 +1118,7 @@ function CaptureView({
     label: "",
     content: "",
     classification: "standard",
-    retention: "until_deleted",
+    retention: undefined,
   });
   const [step, setStep] = useState<"edit" | "review">("edit");
   const [error, setError] = useState("");
@@ -1082,7 +1236,7 @@ function CaptureView({
             </div>
             <div>
               <dt>Retention</dt>
-              <dd>{draft.retention.replace(/_/g, " ")}</dd>
+              <dd>{retentionLabel(draft.retention || defaultRetention)}</dd>
             </div>
           </dl>
           <article className="capture-preview">
@@ -1182,10 +1336,16 @@ function CaptureView({
                 <span>Retention</span>
                 <select
                   onChange={(event) =>
-                    updateDraft("retention", event.target.value as CaptureRetention)
+                    updateDraft(
+                      "retention",
+                      event.target.value === "default"
+                        ? undefined
+                        : (event.target.value as CaptureRetention),
+                    )
                   }
-                  value={draft.retention}
+                  value={draft.retention || "default"}
                 >
+                  <option value="default">Use default ({retentionLabel(defaultRetention)})</option>
                   <option value="until_deleted">Until deleted</option>
                   <option value="review_in_30_days">Review in 30 days</option>
                 </select>
@@ -1636,5 +1796,264 @@ function MemoryView({
         )}
       </section>
     </div>
+  );
+}
+
+function SettingsView({
+  error,
+  isLoading,
+  isSaving,
+  onAddExclusion,
+  onReload,
+  onSavePreferences,
+  onToggleExclusion,
+  preferences,
+}: {
+  error: string;
+  isLoading: boolean;
+  isSaving: boolean;
+  onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onReload: () => void;
+  onSavePreferences: (
+    privacyMode: PrivacyMode,
+    defaultCaptureRetention: CaptureRetention,
+  ) => Promise<boolean>;
+  onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
+  preferences: PrivacyPreferences | null;
+}) {
+  if (isLoading && !preferences) {
+    return <LoadingDesk />;
+  }
+
+  if (!preferences) {
+    return (
+      <section className="settings-workspace" aria-labelledby="settings-heading">
+        <p className="section-kicker">LOCAL PRIVACY CONTROLS</p>
+        <h2 id="settings-heading">Preferences are unavailable right now.</h2>
+        <p>
+          Aura has not changed any saved capture, project, or decision. Retry only reloads the local
+          preferences stored on this device.
+        </p>
+        {error && <p className="field-error">{error}</p>}
+        <button className="primary-action" onClick={onReload} type="button">
+          Try again <Icon name="arrow" />
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <SettingsForm
+      key={`${preferences.privacyMode}-${preferences.defaultCaptureRetention}-${preferences.exclusions.length}`}
+      error={error}
+      isSaving={isSaving}
+      onAddExclusion={onAddExclusion}
+      onSavePreferences={onSavePreferences}
+      onToggleExclusion={onToggleExclusion}
+      preferences={preferences}
+    />
+  );
+}
+
+function SettingsForm({
+  error,
+  isSaving,
+  onAddExclusion,
+  onSavePreferences,
+  onToggleExclusion,
+  preferences,
+}: {
+  error: string;
+  isSaving: boolean;
+  onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onSavePreferences: (
+    privacyMode: PrivacyMode,
+    defaultCaptureRetention: CaptureRetention,
+  ) => Promise<boolean>;
+  onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
+  preferences: PrivacyPreferences;
+}) {
+  const [privacyMode, setPrivacyMode] = useState<PrivacyMode>(preferences.privacyMode);
+  const [defaultRetention, setDefaultRetention] = useState<CaptureRetention>(
+    preferences.defaultCaptureRetention,
+  );
+  const [exclusionKind, setExclusionKind] = useState<ExclusionKind>("application");
+  const [exclusionValue, setExclusionValue] = useState("");
+  const [exclusionError, setExclusionError] = useState("");
+
+  async function submitPreferences(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onSavePreferences(privacyMode, defaultRetention);
+  }
+
+  async function submitExclusion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedValue = exclusionValue.trim();
+    if (!trimmedValue) {
+      setExclusionError("Enter the application, domain, or project name to exclude.");
+      return;
+    }
+    setExclusionError("");
+    const created = await onAddExclusion(exclusionKind, trimmedValue);
+    if (created) {
+      setExclusionValue("");
+    }
+  }
+
+  return (
+    <section className="settings-workspace" aria-labelledby="settings-heading">
+      <div className="settings-intro">
+        <div>
+          <p className="section-kicker">LOCAL PRIVACY CONTROLS</p>
+          <h2 id="settings-heading">You set the boundary.</h2>
+          <p>
+            These settings are stored only in Aura’s local workspace. They never enable screenshots,
+            clipboard reading, microphone access, background collection, or network sync.
+          </p>
+        </div>
+        <span className="local-status">
+          <span aria-hidden="true" /> Local only
+        </span>
+      </div>
+
+      <div className="settings-grid">
+        <form className="settings-card" onSubmit={submitPreferences}>
+          <div className="settings-card-heading">
+            <div>
+              <p className="section-kicker">CAPTURE BEHAVIOR</p>
+              <h3>Manual capture state</h3>
+            </div>
+            <Icon name="shield" />
+          </div>
+          <fieldset disabled={isSaving}>
+            <label className="setting-choice">
+              <input
+                checked={privacyMode === "manual_only"}
+                name="privacy-mode"
+                onChange={() => setPrivacyMode("manual_only")}
+                type="radio"
+                value="manual_only"
+              />
+              <span>
+                <strong>Manual only</strong>
+                <small>
+                  Save only a note, pasted text, or URL that you deliberately review and confirm.
+                </small>
+              </span>
+            </label>
+            <label className="setting-choice">
+              <input
+                checked={privacyMode === "paused"}
+                name="privacy-mode"
+                onChange={() => setPrivacyMode("paused")}
+                type="radio"
+                value="paused"
+              />
+              <span>
+                <strong>Paused</strong>
+                <small>
+                  Block context markers and manual capture until you explicitly resume manual-only
+                  mode.
+                </small>
+              </span>
+            </label>
+            <label className="field settings-field">
+              <span>Default capture retention</span>
+              <select
+                aria-label="Default capture retention"
+                onChange={(event) => setDefaultRetention(event.target.value as CaptureRetention)}
+                value={defaultRetention}
+              >
+                <option value="until_deleted">Until deleted</option>
+                <option value="review_in_30_days">Review in 30 days</option>
+              </select>
+              <small>
+                Capture can still choose an explicit retention value. If it does not, Aura resolves
+                this stored local default in Rust.
+              </small>
+            </label>
+          </fieldset>
+          <button className="primary-action" disabled={isSaving} type="submit">
+            {isSaving ? "Saving locally…" : "Save privacy preferences"}
+          </button>
+          {error && (
+            <p className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+
+        <section className="settings-card exclusion-card" aria-labelledby="exclusions-heading">
+          <div className="settings-card-heading">
+            <div>
+              <p className="section-kicker">FUTURE-READY BOUNDARY</p>
+              <h3 id="exclusions-heading">Exclusion rules</h3>
+            </div>
+            <Icon name="lock" />
+          </div>
+          <p className="settings-note">
+            Aura V0 has no passive observation adapter. These rules are saved now as an explicit
+            product boundary for any later, separately approved local feature; they do not monitor
+            or block another application today.
+          </p>
+          <form className="exclusion-form" onSubmit={submitExclusion}>
+            <label className="field">
+              <span>Rule type</span>
+              <select
+                aria-label="Exclusion rule type"
+                onChange={(event) => setExclusionKind(event.target.value as ExclusionKind)}
+                value={exclusionKind}
+              >
+                <option value="application">Application</option>
+                <option value="domain">Domain</option>
+                <option value="project">Project</option>
+              </select>
+            </label>
+            <label className="field exclusion-value-field">
+              <span>Value</span>
+              <input
+                aria-label="Exclusion value"
+                maxLength={160}
+                onChange={(event) => setExclusionValue(event.target.value)}
+                placeholder={exclusionKind === "domain" ? "example.com" : "Name to exclude"}
+                value={exclusionValue}
+              />
+            </label>
+            <button className="quiet-action" disabled={isSaving} type="submit">
+              Add rule
+            </button>
+          </form>
+          {exclusionError && (
+            <p className="field-error" role="alert">
+              {exclusionError}
+            </p>
+          )}
+          {preferences.exclusions.length === 0 ? (
+            <p className="empty-rule-state">No future exclusion rules saved.</p>
+          ) : (
+            <ul className="exclusion-list">
+              {preferences.exclusions.map((rule) => (
+                <li key={rule.id}>
+                  <div>
+                    <strong>{rule.value}</strong>
+                    <span>{rule.kind}</span>
+                  </div>
+                  <label className="toggle-label">
+                    <span className="sr-only">Enable {rule.value} exclusion</span>
+                    <input
+                      checked={rule.isEnabled}
+                      disabled={isSaving}
+                      onChange={(event) => void onToggleExclusion(rule.id, event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>{rule.isEnabled ? "Enabled" : "Disabled"}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </section>
   );
 }
