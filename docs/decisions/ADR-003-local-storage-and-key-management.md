@@ -1,6 +1,6 @@
 # ADR-003: Local Storage, Migrations, and Windows Key Management
 
-**Status:** Proposed — requires product-owner approval before a database dependency is added.
+**Status:** Accepted — approved by the product owner to begin ENG-002 on 2026-08-13.
 
 **Date:** 2026-08-12
 
@@ -32,6 +32,6 @@ Aura will use **Windows DPAPI** as the V0 key-wrapping boundary. A random data-e
 
 This decision does not add a database dependency, schema, migrations, local file capture, Windows accessibility access, OCR, cloud synchronization, AI provider credentials, or team/multi-user support.
 
-## Approval gate for ENG-002
+## ENG-002 implementation gate
 
-The product owner must approve this ADR before ENG-002 begins. ENG-002 must demonstrate the selected database and encryption packages on Windows, document the exact storage location and backup semantics, add migration tests, and prove that a renderer process cannot read raw key material.
+This ADR is approved for ENG-002. The milestone must demonstrate the selected database package on Windows, document the exact storage location and backup semantics, add migration tests, and prove that the renderer process cannot read raw key material. The DPAPI-wrapped data-encryption-key proof of concept remains a completion gate before shipping persisted user data; no raw key material may be exposed to the renderer.
