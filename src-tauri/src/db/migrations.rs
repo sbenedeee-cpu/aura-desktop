@@ -135,6 +135,23 @@ pub const MIGRATIONS: &[Migration] = &[
                 ON exclusion_rules(rule_type, created_at DESC);
         ",
     },
+    Migration {
+        version: 5,
+        name: "export-and-recovery-audit-log",
+        sql: "
+            CREATE TABLE export_metadata (
+                id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL CHECK(event_type IN ('export_requested', 'export_completed', 'export_failed', 'import_requested', 'import_completed', 'import_failed')),
+                envelope_format_version INTEGER NOT NULL DEFAULT 1,
+                record_counts TEXT NOT NULL DEFAULT '{}',
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                sequence INTEGER NOT NULL
+            );
+            CREATE INDEX export_metadata_created_at_idx
+                ON export_metadata(created_at DESC);
+        ",
+    },
 ];
 
 pub fn run(connection: &mut Connection) -> Result<(), AuraError> {

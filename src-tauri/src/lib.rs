@@ -4,8 +4,10 @@ mod domain;
 
 mod security;
 
+use application::export_service::{ExportEnvelope, ExportService};
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
 use db::{repositories::projects::UpdateProject, LocalStore};
+use domain::export::{ExportEvent, ExportManifest, ExportRecordCounts};
 use domain::{
     capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
     claim::{ClaimConfidence, DecisionClaim},
@@ -17,8 +19,10 @@ use domain::{
 };
 use security::key_vault::{KeyVault, KeyVaultStatus};
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -351,9 +355,188 @@ fn key_vault_status(state: tauri::State<'_, AppState>) -> Result<KeyVaultStatus,
     Ok(key_vault.status())
 }
 
+// EXP-001: native filesystem dialog support. The renderer never chooses
+// paths itself; export and import destinations come from the native
+// save/open dialogs wired into the three typed commands below.
+#[tauri::command]
+fn export_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExportManifest, String> {
+    let mut store = state
+        .store
+        .lock()
+        .map_err(|_| "Aura could not access its local workspace safely.".to_string())?;
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+
+    let service = ExportService::new(&mut store, &key_vault);
+
+    service
+        .record_export_event(
+            ExportEvent::ExportRequested,
+            &ExportRecordCounts::default(),
+            "",
+        )
+        .ok();
+
+    let envelope: ExportEnvelope = service
+        .assemble_export()
+        .map_err(|error| error.to_string())?;
+
+    let manifest = ExportService::envelope_manifest(
+        &serde_json::to_vec(&envelope)
+            .map_err(|_| "Aura could not encode its export envelope.".to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let envelope_json = serde_json::to_vec(&envelope)
+        .map_err(|_| "Aura could not encode its export envelope.".to_string())?;
+
+    // SAFETY: the dialog runs on the app handle captured from state via the
+    // Manager trait; a blocking native dialog is intentional here so the
+    // export write completes before the command returns.
+    let result = std::thread::spawn(move || {
+        let timestamp = db::migrations::utc_timestamp()
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+            .replace(' ', "T")
+            .replace(':', "-");
+        app.dialog()
+            .file()
+            .set_title("Save the Aura workspace archive")
+            .add_filter("Aura workspace archive", &["aura-export"])
+            .set_file_name(format!("aura-workspace-{timestamp}.aura"))
+            .blocking_save_file()
+            .and_then(|file_path| match file_path.as_path() {
+                Some(path) => std::fs::write(path, &envelope_json)
+                    .map_err(|error| error.to_string())
+                    .map(|_| path.to_path_buf())
+                    .ok(),
+                None => Some(PathBuf::new()),
+            })
+            .map(|path| {
+                if path.as_os_str().is_empty() {
+                    Err("The chosen export destination is not a filesystem path.".to_string())
+                } else {
+                    Ok(path)
+                }
+            })
+    })
+    .join()
+    .map_err(|_| "Aura could not complete the workspace export safely.".to_string())?;
+
+    match result {
+        Some(Ok(path)) => {
+            let detail = format!("Aura exported its local workspace to {}.", path.display());
+            service
+                .record_export_event(
+                    ExportEvent::ExportCompleted,
+                    &manifest.record_counts,
+                    &detail,
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(manifest)
+        }
+        Some(Err(error)) => {
+            service
+                .record_export_event(
+                    ExportEvent::ExportFailed,
+                    &manifest.record_counts,
+                    &format!("Aura could not write the archive: {error}."),
+                )
+                .ok();
+            Err(format!("Aura could not write the export archive: {error}."))
+        }
+        None => {
+            service
+                .record_export_event(
+                    ExportEvent::ExportFailed,
+                    &manifest.record_counts,
+                    "The export destination was cancelled.",
+                )
+                .ok();
+            Err("The export was cancelled before Aura could save the archive.".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn import_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExportManifest, String> {
+    let mut store = state
+        .store
+        .lock()
+        .map_err(|_| "Aura could not access its local workspace safely.".to_string())?;
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+
+    let chosen = std::thread::spawn(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose an Aura workspace archive")
+            .add_filter("Aura workspace archive", &["aura"])
+            .blocking_pick_file()
+            .and_then(|file_path| file_path.as_path().map(std::path::Path::to_path_buf))
+    })
+    .join()
+    .map_err(|_| "Aura could not complete the workspace recovery safely.".to_string())?;
+
+    let source_path = chosen.ok_or_else(|| {
+        "The import was cancelled before Aura could read the archive.".to_string()
+    })?;
+
+    let raw = std::fs::read(&source_path)
+        .map_err(|error| format!("Aura could not read that archive: {error}."))?;
+
+    let manifest = ExportService::envelope_manifest(&raw).map_err(|error| error.to_string())?;
+
+    let mut service = ExportService::new(&mut store, &key_vault);
+    service
+        .record_export_event(ExportEvent::ImportRequested, &manifest.record_counts, "")
+        .ok();
+
+    let counts = service.apply_import(&raw).map_err(|error| {
+        service
+            .record_export_event(
+                ExportEvent::ImportFailed,
+                &manifest.record_counts,
+                &format!("Aura could not recover its local workspace: {error}."),
+            )
+            .ok();
+        error.to_string()
+    })?;
+
+    service
+        .record_export_event(
+            ExportEvent::ImportCompleted,
+            &counts,
+            &format!(
+                "Aura recovered its local workspace from {}.",
+                source_path.display()
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(manifest)
+}
+
+#[tauri::command]
+fn export_manifest(source_path: String) -> Result<ExportManifest, String> {
+    let raw = std::fs::read(&source_path)
+        .map_err(|error| format!("Aura could not read that export file: {error}."))?;
+    ExportService::envelope_manifest(&raw).map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -375,6 +558,9 @@ pub fn run() {
             seal_secret,
             open_secret,
             key_vault_status,
+            export_workspace,
+            import_workspace,
+            export_manifest,
             get_workspace_snapshot,
             create_project,
             list_projects,

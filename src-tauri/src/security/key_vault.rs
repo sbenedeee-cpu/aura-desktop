@@ -327,8 +327,14 @@ impl KeyVault {
         })
     }
 
-    /// Status summary for the diagnostic command. Returns no raw key
-    /// material and no wrapped blob.
+    /// The application-data directory this vault persists its wrapped key in.
+    #[allow(dead_code)]
+    /// Exposed for the export/recovery path (the archive's key binding is
+    /// derived from this directory) and tests; it carries no key material.
+    pub fn data_directory(&self) -> &std::path::Path {
+        &self.data_directory
+    }
+
     pub fn status(&self) -> KeyVaultStatus {
         KeyVaultStatus {
             wrapped_key_persisted: self.data_directory.join(WRAPPED_KEY_FILE_NAME).exists(),
