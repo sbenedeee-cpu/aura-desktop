@@ -2,6 +2,8 @@ mod application;
 mod db;
 mod domain;
 
+mod security;
+
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
 use db::{repositories::projects::UpdateProject, LocalStore};
 use domain::{
@@ -13,6 +15,7 @@ use domain::{
         SetExclusionEnabledInput, UpdatePrivacyPreferencesInput,
     },
 };
+use security::key_vault::{KeyVault, KeyVaultStatus};
 use serde::Deserialize;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -60,6 +63,7 @@ struct CreateDecisionInput {
 
 struct AppState {
     store: Mutex<LocalStore>,
+    key_vault: Mutex<KeyVault>,
 }
 
 fn with_store_mut<T>(
@@ -312,6 +316,41 @@ fn parse_capture_retention(value: String) -> Result<CaptureRetention, AuraError>
     })
 }
 
+// SEC-001: diagnostic verification commands. None of them expose raw key
+// material or the wrapped blob; they exist only to prove the envelope
+// boundary through the typed command layer.
+#[tauri::command]
+fn seal_secret(state: tauri::State<'_, AppState>, secret: String) -> Result<Vec<u8>, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    let sealed = key_vault
+        .seal(secret.as_bytes())
+        .map(|value| KeyVault::encode_sealed(&value));
+    sealed.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_secret(state: tauri::State<'_, AppState>, sealed_bytes: Vec<u8>) -> Result<String, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    let sealed = KeyVault::decode_sealed(&sealed_bytes).map_err(|error| error.to_string())?;
+    let plaintext = key_vault.open(&sealed).map_err(|error| error.to_string())?;
+    String::from_utf8(plaintext).map_err(|_| "sealed secret is not valid UTF-8".to_string())
+}
+
+#[tauri::command]
+fn key_vault_status(state: tauri::State<'_, AppState>) -> Result<KeyVaultStatus, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    Ok(key_vault.status())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -324,12 +363,18 @@ pub fn run() {
 
             let store = LocalStore::open(&data_dir.join("aura.sqlite3"))
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let key_vault = KeyVault::new(&data_dir)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             app.manage(AppState {
                 store: Mutex::new(store),
+                key_vault: Mutex::new(key_vault),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            seal_secret,
+            open_secret,
+            key_vault_status,
             get_workspace_snapshot,
             create_project,
             list_projects,

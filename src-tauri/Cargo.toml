@@ -24,4 +24,10 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+# SEC-001: value-level envelope encryption (database-agnostic per ADR-003).
+getrandom = "0.3"
+chacha20poly1305 = "0.10"
 
+# SEC-001: DPAPI key wrapping (Windows only).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Security_Cryptography"] }

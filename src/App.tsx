@@ -94,6 +94,11 @@ type CaptureDraft = {
 
 type ExclusionKind = "application" | "domain" | "project";
 
+type KeyVaultStatus = {
+  wrappedKeyPersisted: boolean;
+  keyLength: number;
+  sealedVersion: number;
+};
 type ExclusionRule = {
   id: string;
   kind: ExclusionKind;
@@ -1821,6 +1826,16 @@ function SettingsView({
   onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
   preferences: PrivacyPreferences | null;
 }) {
+  const [keyVaultStatus, setKeyVaultStatus] = useState<KeyVaultStatus | null>(null);
+
+  const loadKeyVaultStatus = useCallback(async () => {
+    try {
+      const status = await invoke<KeyVaultStatus>("key_vault_status");
+      setKeyVaultStatus(status);
+    } catch {
+      setKeyVaultStatus(null);
+    }
+  }, []);
   if (isLoading && !preferences) {
     return <LoadingDesk />;
   }
@@ -1849,6 +1864,8 @@ function SettingsView({
       isSaving={isSaving}
       onAddExclusion={onAddExclusion}
       onSavePreferences={onSavePreferences}
+      keyVaultStatus={keyVaultStatus}
+      loadKeyVaultStatus={loadKeyVaultStatus}
       onToggleExclusion={onToggleExclusion}
       preferences={preferences}
     />
@@ -1858,6 +1875,8 @@ function SettingsView({
 function SettingsForm({
   error,
   isSaving,
+  keyVaultStatus,
+  loadKeyVaultStatus,
   onAddExclusion,
   onSavePreferences,
   onToggleExclusion,
@@ -1865,6 +1884,8 @@ function SettingsForm({
 }: {
   error: string;
   isSaving: boolean;
+  keyVaultStatus: KeyVaultStatus | null;
+  loadKeyVaultStatus: () => void;
   onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
   onSavePreferences: (
     privacyMode: PrivacyMode,
@@ -2053,6 +2074,29 @@ function SettingsForm({
             </ul>
           )}
         </section>
+        <div className="settings-section">
+          <h3 className="settings-card-heading">Local key protection</h3>
+          <p className="settings-note">
+            Aura wraps its local data-encryption key with the Windows user boundary (DPAPI) and
+            encrypts values with an authenticated envelope. Only a status summary is exposed; raw
+            key material never leaves this device and is never shown here.
+          </p>
+          <div className="preference-row">
+            <span>Wrapped key stored</span>
+            <span>
+              {keyVaultStatus ? (keyVaultStatus.wrappedKeyPersisted ? "Yes" : "No") : "—"}
+            </span>
+          </div>
+          <button className="quiet-action" type="button" onClick={() => void loadKeyVaultStatus()}>
+            Check key protection
+          </button>
+          {keyVaultStatus && (
+            <p className="settings-note">
+              Key length: {keyVaultStatus.keyLength} bytes · Sealed format version{" "}
+              {keyVaultStatus.sealedVersion}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   );
