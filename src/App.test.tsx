@@ -80,6 +80,21 @@ describe("Aura Continuity Desk privacy boundary", () => {
       if (command === "list_decisions") {
         return Promise.resolve([]);
       }
+      if (command === "list_reviewable_captures") {
+        return Promise.resolve([]);
+      }
+      if (command === "run_retention_sweep") {
+        return Promise.resolve({
+          sweptAt: "2026-08-14T10:00:00Z",
+          capturesReviewed: 0,
+          capturesAgedNow: 0,
+          capturesAlreadyAged: 0,
+          capturesProtected: 0,
+        });
+      }
+      if (command === "keep_capture" || command === "expire_capture") {
+        return Promise.resolve(undefined);
+      }
 
       return Promise.resolve(undefined);
     });
@@ -216,6 +231,21 @@ describe("Aura export and recovery controls", () => {
       }
       if (command === "export_manifest") {
         return Promise.resolve(sampleExportManifest);
+      }
+      if (command === "list_reviewable_captures") {
+        return Promise.resolve([]);
+      }
+      if (command === "run_retention_sweep") {
+        return Promise.resolve({
+          sweptAt: "2026-08-14T10:00:00Z",
+          capturesReviewed: 0,
+          capturesAgedNow: 0,
+          capturesAlreadyAged: 0,
+          capturesProtected: 0,
+        });
+      }
+      if (command === "keep_capture" || command === "expire_capture") {
+        return Promise.resolve(undefined);
       }
 
       return Promise.resolve(undefined);
@@ -577,5 +607,133 @@ describe("Aura local privacy preferences", () => {
       screen.getByText("Enter the application, domain, or project name to exclude."),
     ).toBeInTheDocument();
     expect(invokeMock).not.toHaveBeenCalledWith("create_exclusion_rule", expect.anything());
+  });
+});
+
+describe("Aura retention review (EXP-003)", () => {
+  const agedCapture = {
+    id: "cap-41",
+    projectId: "aura",
+    label: "Auth flow analysis",
+    classification: "standard" as const,
+    createdAt: "2026-07-01T10:00:00Z",
+    agedAt: "2026-07-31T10:00:00Z",
+    daysAged: 14,
+  };
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_workspace_snapshot") {
+        return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "get_privacy_preferences") {
+        return Promise.resolve(persistedPreferences);
+      }
+      if (command === "list_reviewable_captures") {
+        return Promise.resolve([agedCapture]);
+      }
+      if (command === "run_retention_sweep") {
+        return Promise.resolve({
+          sweptAt: "2026-08-14T10:00:00Z",
+          capturesReviewed: 3,
+          capturesAgedNow: 1,
+          capturesAlreadyAged: 1,
+          capturesProtected: 1,
+        });
+      }
+      if (command === "keep_capture" || command === "expire_capture") {
+        return Promise.resolve(undefined);
+      }
+
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it("shows the retention review queue on the Today view", async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Auth flow analysis")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/In review for 14 days/)).toBeInTheDocument();
+    expect(screen.getByText("1 due")).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("list_reviewable_captures", {});
+  });
+
+  it("keeps a reviewed capture through the typed native command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Auth flow analysis")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /Keep Auth flow analysis/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("keep_capture", { captureId: "cap-41" });
+    });
+    expect(screen.getByText(/Capture kept/)).toBeInTheDocument();
+  });
+
+  it("deliberately removes an aged capture after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Auth flow analysis")).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Remove Auth flow analysis from the local workspace/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("expire_capture", { captureId: "cap-41" });
+    });
+    expect(screen.getByText(/removed from the local workspace/i)).toBeInTheDocument();
+  });
+
+  it("runs a retention sweep from the data lifecycle settings card", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    // Sanity check borrowed from the passing exclusion test: the settings page
+    // must render the privacy boundary copy. If this fails, preferences are not
+    // resolving in this describe block.
+    await waitFor(
+      () => {
+        expect(screen.getByText("You set the boundary.")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByText(/Aura V0 has no passive observation adapter/)).toBeInTheDocument();
+
+    await waitFor(
+      () => {
+        expect(screen.getByText("Retention review")).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+
+    await user.click(screen.getByRole("button", { name: /Run retention sweep/i }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("run_retention_sweep", {});
+    });
+    expect(screen.getByText(/1 capture moved to review\. Sensitive captures/)).toBeInTheDocument();
+    expect(screen.getAllByText(/never aged automatically/).length).toBeGreaterThanOrEqual(1);
   });
 });

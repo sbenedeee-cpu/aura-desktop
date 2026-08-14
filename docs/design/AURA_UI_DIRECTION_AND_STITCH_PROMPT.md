@@ -14,23 +14,23 @@ The visual character is **quietly premium and grounded**. It combines a warm cha
 
 ## 2. Semantic Token System
 
-| Token | Value | Role |
-|---|---:|---|
-| `--canvas` | `#121311` | Application background |
-| `--surface` | `#1A1B18` | Persistent navigation and standard cards |
-| `--surface-raised` | `#22231F` | Elevated panels and dialogs |
-| `--surface-input` | `#171815` | Editable fields and selected list rows |
-| `--border-subtle` | `#34362F` | Card and table division |
-| `--border-strong` | `#505349` | Focus-adjacent structural emphasis |
-| `--text-primary` | `#F3F4EE` | Primary reading text |
-| `--text-secondary` | `#B7B9B0` | Supporting labels and explanatory text |
-| `--text-muted` | `#82857B` | Metadata only, never the sole state indicator |
-| `--accent` | `#8B8CF7` | Primary user action and selected state |
-| `--accent-hover` | `#A5A6FF` | Action hover and keyboard focus ring |
-| `--accent-soft` | `#2A2B53` | Low-emphasis selected context |
-| `--success` | `#78C99B` | Confirmed local save, paired with explicit text |
-| `--warning` | `#E5B75E` | Sensitive-data and retention warnings |
-| `--danger` | `#E58383` | Archive, delete, and irreversible-error treatment |
+| Token              |     Value | Role                                              |
+| ------------------ | --------: | ------------------------------------------------- |
+| `--canvas`         | `#121311` | Application background                            |
+| `--surface`        | `#1A1B18` | Persistent navigation and standard cards          |
+| `--surface-raised` | `#22231F` | Elevated panels and dialogs                       |
+| `--surface-input`  | `#171815` | Editable fields and selected list rows            |
+| `--border-subtle`  | `#34362F` | Card and table division                           |
+| `--border-strong`  | `#505349` | Focus-adjacent structural emphasis                |
+| `--text-primary`   | `#F3F4EE` | Primary reading text                              |
+| `--text-secondary` | `#B7B9B0` | Supporting labels and explanatory text            |
+| `--text-muted`     | `#82857B` | Metadata only, never the sole state indicator     |
+| `--accent`         | `#8B8CF7` | Primary user action and selected state            |
+| `--accent-hover`   | `#A5A6FF` | Action hover and keyboard focus ring              |
+| `--accent-soft`    | `#2A2B53` | Low-emphasis selected context                     |
+| `--success`        | `#78C99B` | Confirmed local save, paired with explicit text   |
+| `--warning`        | `#E5B75E` | Sensitive-data and retention warnings             |
+| `--danger`         | `#E58383` | Archive, delete, and irreversible-error treatment |
 
 Use a 4px base spacing grid with a practical desktop scale of `4, 8, 12, 16, 20, 24, 32, 40, 48, 64`. Use `8px` radii for inputs and small controls, `12px` radii for panels, and no oversized glass effects. Motion is short and purposeful (`160–220ms`), with an equivalent reduced-motion presentation.
 
@@ -68,16 +68,16 @@ The archive dialog identifies the exact project by name and explains: `Archiving
 
 ## 5. Required Interaction States
 
-| State | Design behavior |
-|---|---|
-| Loading | Preserve route layout, use text-labeled skeletons, and avoid implying data is current before the native read succeeds. |
-| First use | Explain the next safe action and do not render fabricated sample projects. |
-| Validation error | Show the message beside the field, preserve user input, and move focus to the first actionable error after submit. |
-| Saving | Disable duplicate submission, retain context, and show the affected record. |
-| Saved | Use concise confirmation such as `Project saved locally`; do not use celebration animation. |
-| Recoverable error | Explain that the data was not confirmed as saved, preserve form contents, and offer retry or safe cancel. |
-| Paused privacy | Show `Paused — manual context cannot be saved` next to the relevant action, not only in Settings. |
-| No selected project | Explain the scope requirement and offer a clear project-selection action. |
+| State               | Design behavior                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Loading             | Preserve route layout, use text-labeled skeletons, and avoid implying data is current before the native read succeeds. |
+| First use           | Explain the next safe action and do not render fabricated sample projects.                                             |
+| Validation error    | Show the message beside the field, preserve user input, and move focus to the first actionable error after submit.     |
+| Saving              | Disable duplicate submission, retain context, and show the affected record.                                            |
+| Saved               | Use concise confirmation such as `Project saved locally`; do not use celebration animation.                            |
+| Recoverable error   | Explain that the data was not confirmed as saved, preserve form contents, and offer retry or safe cancel.              |
+| Paused privacy      | Show `Paused — manual context cannot be saved` next to the relevant action, not only in Settings.                      |
+| No selected project | Explain the scope requirement and offer a clear project-selection action.                                              |
 
 ## 6. Google Stitch Prompt
 

@@ -2,4 +2,5 @@ pub mod capture;
 pub mod claim;
 pub mod export;
 pub mod project;
+pub mod retention;
 pub mod settings;

@@ -362,7 +362,7 @@ mod tests {
     fn migration_creates_an_empty_local_workspace_with_privacy_controls() {
         let store = LocalStore::open_in_memory().expect("test database should migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 5);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
 
         let preferences = store.privacy_preferences().expect("preferences");
         assert_eq!(preferences.privacy_mode.as_str(), "manual_only");
@@ -387,7 +387,7 @@ mod tests {
         run(&mut connection).expect("fifth migration should apply");
 
         let store = LocalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("schema version"), 5);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
         assert_eq!(
             store
                 .privacy_preferences()
@@ -409,7 +409,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count");
-        assert_eq!(applied_count, 5);
+        assert_eq!(applied_count, 6);
     }
 
     #[test]

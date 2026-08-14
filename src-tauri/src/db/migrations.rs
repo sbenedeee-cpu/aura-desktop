@@ -152,6 +152,23 @@ pub const MIGRATIONS: &[Migration] = &[
                 ON export_metadata(created_at DESC);
         ",
     },
+    Migration {
+        version: 6,
+        name: "capture-lifecycle-for-retention-sweep",
+        sql: "
+            ALTER TABLE captures
+                ADD COLUMN lifecycle_state TEXT NOT NULL
+                    CHECK(lifecycle_state IN ('active', 'aged', 'deleted'))
+                    DEFAULT 'active';
+            ALTER TABLE captures
+                ADD COLUMN lifecycle_updated_at TEXT NOT NULL DEFAULT '';
+            UPDATE captures
+                SET lifecycle_updated_at = created_at
+                WHERE lifecycle_updated_at = '';
+            CREATE INDEX captures_lifecycle_state_idx
+                ON captures(lifecycle_state, lifecycle_updated_at DESC);
+        ",
+    },
 ];
 
 pub fn run(connection: &mut Connection) -> Result<(), AuraError> {

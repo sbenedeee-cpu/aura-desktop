@@ -13,14 +13,14 @@ EXP-002 closes that gap without weakening the default model: when exporting, the
 
 ## 2. Locked Context
 
-| Source | What it locks |
-|---|---|
-| ADR-005 (accepted) | Export envelope strategy, checksum-first import, transactional restore; ADR explicitly defers passphrase re-sealing to EXP-002 |
-| ADR-004 | Value-level ChaCha20Poly1305 envelope construction with DPAPI-wrapped key; raw key never touches disk |
-| ADR-002 | Intentional capture only; no passive observation; no network sync |
-| AGENTS.md | Renderer receives only narrow typed commands; no raw DB access; security-sensitive changes need documented rationale and tests |
-| EXP-001 (merged) | `ExportService` (`src-tauri/src/application/export_service.rs`), domain DTOs (`src-tauri/src/domain/export.rs`), envelope `{format_version: 1, …}` shape, `export_workspace`/`import_workspace`/`export_manifest` commands, native-dialog-only paths, append-only `export_metadata` audit table |
-| EXP-001 scope exclusion | The "no key export" exclusion is now lifted **only** for the passphrase path: the passphrase-derived key lives in process memory and is never persisted in any recoverable form |
+| Source                  | What it locks                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADR-005 (accepted)      | Export envelope strategy, checksum-first import, transactional restore; ADR explicitly defers passphrase re-sealing to EXP-002                                                                                                                                                                  |
+| ADR-004                 | Value-level ChaCha20Poly1305 envelope construction with DPAPI-wrapped key; raw key never touches disk                                                                                                                                                                                           |
+| ADR-002                 | Intentional capture only; no passive observation; no network sync                                                                                                                                                                                                                               |
+| AGENTS.md               | Renderer receives only narrow typed commands; no raw DB access; security-sensitive changes need documented rationale and tests                                                                                                                                                                  |
+| EXP-001 (merged)        | `ExportService` (`src-tauri/src/application/export_service.rs`), domain DTOs (`src-tauri/src/domain/export.rs`), envelope `{format_version: 1, …}` shape, `export_workspace`/`import_workspace`/`export_manifest` commands, native-dialog-only paths, append-only `export_metadata` audit table |
+| EXP-001 scope exclusion | The "no key export" exclusion is now lifted **only** for the passphrase path: the passphrase-derived key lives in process memory and is never persisted in any recoverable form                                                                                                                 |
 
 ## 3. Design
 
@@ -37,6 +37,7 @@ EXP-002 closes that gap without weakening the default model: when exporting, the
 ## 4. Scope
 
 **In scope:**
+
 1. New `src-tauri/src/security/passphrase.rs` — argon2id derivation with typed params and `#[repr(transparent)]`-friendly key wrapper that zeroes on drop
 2. `ExportService` extended: `seal_variant` parameter (`Dpapi` | `Passphrase(passphrase)`), envelope version bumped to 2 with `sealing` discriminator
 3. Import extended: variant detection, passphrase derivation, checksum-first verification, typed `WrongPassphrase` error
@@ -46,22 +47,23 @@ EXP-002 closes that gap without weakening the default model: when exporting, the
 7. README + this work package status updates; ADR-005 status → Accepted with EXP-002 note
 
 **Out of scope (explicit non-goals):**
+
 - Passphrase storage, OS keyring integration, or any recovery/escape-hatch mechanism (losing the passphrase means losing the archive)
 - Changing the default export mode — DPAPI remains the default
 - Scheduled backups, partial exports, compression, or any network behavior
 
 ## 5. Acceptance Criteria
 
-| # | Criterion |
-|---|---|
-| 1 | A passphrase-sealed export opens and restores on a freshly created vault with a different DPAPI boundary (proven by test: derive fresh vault, import the passphrase archive) |
-| 2 | A wrong passphrase fails authentication **before** any record is written, with a typed error |
-| 3 | A tampered passphrase-sealed archive fails the checksum before any record is written |
-| 4 | The exported file contains the argon2id salt and params, the manifest, and the sealed payload — and no trace of the passphrase bytes |
-| 5 | `format_version: 1` DPAPI envelopes still import cleanly (backward compatibility) |
-| 6 | The renderer never stores the passphrase in state visible to tests/serializers beyond the command call, and the weak-passphrase gate is enforced on the native side |
-| 7 | At least 8 new native tests pass; `pnpm quality` fully green; CI green on the PR |
-| 8 | ADR-005 is updated: the open question closes with the EXP-002 resolution, and README tracks EXP-002 as delivered with the following next increment |
+| #   | Criterion                                                                                                                                                                    |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | A passphrase-sealed export opens and restores on a freshly created vault with a different DPAPI boundary (proven by test: derive fresh vault, import the passphrase archive) |
+| 2   | A wrong passphrase fails authentication **before** any record is written, with a typed error                                                                                 |
+| 3   | A tampered passphrase-sealed archive fails the checksum before any record is written                                                                                         |
+| 4   | The exported file contains the argon2id salt and params, the manifest, and the sealed payload — and no trace of the passphrase bytes                                         |
+| 5   | `format_version: 1` DPAPI envelopes still import cleanly (backward compatibility)                                                                                            |
+| 6   | The renderer never stores the passphrase in state visible to tests/serializers beyond the command call, and the weak-passphrase gate is enforced on the native side          |
+| 7   | At least 8 new native tests pass; `pnpm quality` fully green; CI green on the PR                                                                                             |
+| 8   | ADR-005 is updated: the open question closes with the EXP-002 resolution, and README tracks EXP-002 as delivered with the following next increment                           |
 
 ## 6. Branch and Delivery
 

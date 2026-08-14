@@ -922,6 +922,7 @@ impl<'store> ExportService<'store> {
             .prepare(
                 "SELECT id, project_id, kind, label, content, classification, retention, created_at
                  FROM captures
+                 WHERE lifecycle_state != 'deleted'
                  ORDER BY created_at ASC",
             )
             .map_err(|error| {

@@ -13,13 +13,13 @@ The redesign deliberately removes the previous black-panel aesthetic, pseudo-fut
 
 ## 2. Non-Negotiable Truthfulness Rules
 
-| The interface may say | The interface must not say |
-|---|---|
-| `Local record`, `Saved locally`, `Manual only`, `No background capture` | `Encrypted` before the DPAPI proof and encrypted storage gate pass |
-| `No activity recorded yet` | `Captured note`, `Decision recorded`, or other fabricated sample data |
-| `No blocker recorded` | A guessed blocker, inferred project state, or AI-generated summary |
-| `Manual context is paused` | That context is still collected, queued, or monitored |
-| `Future surface` for inactive routes | That Capture, Memory, Activity, or Settings are already usable if the feature does not exist |
+| The interface may say                                                   | The interface must not say                                                                   |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Local record`, `Saved locally`, `Manual only`, `No background capture` | `Encrypted` before the DPAPI proof and encrypted storage gate pass                           |
+| `No activity recorded yet`                                              | `Captured note`, `Decision recorded`, or other fabricated sample data                        |
+| `No blocker recorded`                                                   | A guessed blocker, inferred project state, or AI-generated summary                           |
+| `Manual context is paused`                                              | That context is still collected, queued, or monitored                                        |
+| `Future surface` for inactive routes                                    | That Capture, Memory, Activity, or Settings are already usable if the feature does not exist |
 
 ## 3. Core Layout
 
@@ -33,24 +33,24 @@ At narrower widths, the activity rail collapses below the continuity canvas. The
 
 ## 4. Design Tokens
 
-| Category | Token | Value / behaviour |
-|---|---|---|
-| Canvas | `--canvas` | `#F7F4ED`, a warm paper-white application field |
-| Surface | `--surface` | `#FFFCF6`, cards and editable panels |
-| Surface muted | `--surface-muted` | `#F0ECE3`, selected navigation and quiet grouping |
-| Ink | `--ink` | `#20201D`, primary text and line work |
-| Ink muted | `--ink-muted` | `#706E67`, metadata and explanatory text |
-| Line | `--line` | `#D9D4C9`, 1px structural dividers |
-| Accent | `--accent` | `#2856D9`, primary action, selection, focus ring |
-| Accent soft | `--accent-soft` | `#E6ECFF`, selected context surface |
-| Success | `--success` | `#2A7A55`, paired with saved-status copy |
-| Warning | `--warning` | `#906A18`, paired with explicit sensitive/retention copy |
-| Danger | `--danger` | `#B53B37`, archive/delete only |
-| Display type | `--font-display` | `"Iowan Old Style", "Palatino Linotype", Georgia, serif` |
-| UI type | `--font-ui` | `Inter, ui-sans-serif, system-ui, sans-serif` |
-| Radius | `--radius-card` | `12px`; controls use `8px` |
-| Spacing | `--space-*` | 4px base scale: 4, 8, 12, 16, 20, 24, 32, 40, 48, 64 |
-| Motion | `--motion-fast` | 160ms ease-out; disabled with reduced-motion preference |
+| Category      | Token             | Value / behaviour                                        |
+| ------------- | ----------------- | -------------------------------------------------------- |
+| Canvas        | `--canvas`        | `#F7F4ED`, a warm paper-white application field          |
+| Surface       | `--surface`       | `#FFFCF6`, cards and editable panels                     |
+| Surface muted | `--surface-muted` | `#F0ECE3`, selected navigation and quiet grouping        |
+| Ink           | `--ink`           | `#20201D`, primary text and line work                    |
+| Ink muted     | `--ink-muted`     | `#706E67`, metadata and explanatory text                 |
+| Line          | `--line`          | `#D9D4C9`, 1px structural dividers                       |
+| Accent        | `--accent`        | `#2856D9`, primary action, selection, focus ring         |
+| Accent soft   | `--accent-soft`   | `#E6ECFF`, selected context surface                      |
+| Success       | `--success`       | `#2A7A55`, paired with saved-status copy                 |
+| Warning       | `--warning`       | `#906A18`, paired with explicit sensitive/retention copy |
+| Danger        | `--danger`        | `#B53B37`, archive/delete only                           |
+| Display type  | `--font-display`  | `"Iowan Old Style", "Palatino Linotype", Georgia, serif` |
+| UI type       | `--font-ui`       | `Inter, ui-sans-serif, system-ui, sans-serif`            |
+| Radius        | `--radius-card`   | `12px`; controls use `8px`                               |
+| Spacing       | `--space-*`       | 4px base scale: 4, 8, 12, 16, 20, 24, 32, 40, 48, 64     |
+| Motion        | `--motion-fast`   | 160ms ease-out; disabled with reduced-motion preference  |
 
 The design uses no gradients, glow, glassmorphism, dashboard charts, ambient particle effects, or decorative “AI” graphics. Every colour pairing must pass accessible contrast for text and controls. Focus rings use a 3px visible accent outline with a surface offset.
 
