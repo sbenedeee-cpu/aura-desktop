@@ -34,4 +34,7 @@ argon2 = "0.5"
 
 # SEC-001: DPAPI key wrapping (Windows only).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Security_Cryptography"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Security_Cryptography",
+  "Win32_System_Com",
+] }
