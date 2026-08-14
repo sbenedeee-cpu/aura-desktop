@@ -94,16 +94,25 @@ impl PlatformKeyWrapper for DpapiKeyWrapper {
         // CRYPTPROTECT_MEMORY is not passed: the blob is bound to the current
         // Windows user and machine, so the current-user context that owns the
         // database file can always unwrap it.
-        let mut protected: DATA_BLOB = DATA_BLOB {
+        let mut protected = windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB {
             cbData: KEY_LENGTH as u32,
             pbData: key.as_ptr() as *mut u8,
         };
-        let mut wrapped: DATA_BLOB = DATA_BLOB {
+        let mut wrapped = windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB {
             cbData: 0,
             pbData: std::ptr::null_mut(),
         };
-        let status =
-            unsafe { CryptProtectData(&mut protected, None, None, None, None, 0, &mut wrapped) };
+        let status = unsafe {
+            CryptProtectData(
+                &mut protected,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                &mut wrapped,
+            )
+        };
         if status == 0 {
             return Err(KeyVaultError::Wrapping(format!(
                 "CryptProtectData failed with code {}",
@@ -119,16 +128,24 @@ impl PlatformKeyWrapper for DpapiKeyWrapper {
     fn unwrap(&self, blob: &[u8]) -> Result<[u8; KEY_LENGTH], KeyVaultError> {
         use windows_sys::Win32::Security::Cryptography::*;
 
-        let mut protected: DATA_BLOB = DATA_BLOB {
+        let mut protected = windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB {
             cbData: blob.len() as u32,
             pbData: blob.as_ptr() as *mut u8,
         };
-        let mut unwrapped: DATA_BLOB = DATA_BLOB {
+        let mut unwrapped = windows_sys::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB {
             cbData: 0,
             pbData: std::ptr::null_mut(),
         };
         let status = unsafe {
-            CryptUnprotectData(&mut protected, None, None, None, None, 0, &mut unwrapped)
+            CryptUnprotectData(
+                &mut protected,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                &mut unwrapped,
+            )
         };
         if status == 0 {
             return Err(KeyVaultError::Wrapping(format!(
