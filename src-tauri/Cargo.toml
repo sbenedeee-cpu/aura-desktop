@@ -30,6 +30,7 @@ hex = "0.4"
 getrandom = "0.3"
 chacha20poly1305 = "0.10"
 tauri-plugin-dialog = "2"
+argon2 = "0.5"
 
 # SEC-001: DPAPI key wrapping (Windows only).
 [target.'cfg(windows)'.dependencies]

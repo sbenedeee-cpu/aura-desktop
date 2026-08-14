@@ -183,7 +183,8 @@ describe("Aura Continuity Desk privacy boundary", () => {
 });
 
 const sampleExportManifest = {
-  formatVersion: 1,
+  formatVersion: 2,
+  sealing: "dpapi" as const,
   exportedAt: "2026-08-14T09:12:00Z",
   exportedByVersion: "0.1.0",
   recordCounts: {
@@ -259,7 +260,39 @@ describe("Aura export and recovery controls", () => {
     await user.click(screen.getByRole("button", { name: "Restore from archive…" }));
 
     await waitFor(() => {
-      expect(invokeMock).toHaveBeenCalledWith("import_workspace", {});
+      expect(invokeMock).toHaveBeenCalledWith("import_workspace", {
+        input: { passphrase: undefined },
+      });
+    });
+  });
+
+  it("starts a transactional restore through the native import command with empty input placeholder", async () => {
+    // kept as an alias documentation of the v2 call shape
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Restore from archive…" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalled();
+    });
+  });
+
+  it("passes the restoration passphrase through to the native import command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+
+    const passphraseField = screen.getByLabelText("Passphrase for restoring a sealed archive");
+    await user.type(passphraseField, "correct-horse-battery");
+    await user.click(await screen.findByRole("button", { name: "Restore from archive…" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("import_workspace", {
+        input: { passphrase: "correct-horse-battery" },
+      });
     });
   });
 
@@ -337,9 +370,96 @@ describe("Aura export and recovery controls", () => {
     });
 
     expect(
-      screen.getByText(/can only be opened by an Aura installation with the same workspace key/),
+      screen.getByText(/archive opens only on an Aura installation holding the same workspace key/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Nothing is ever sent to a network/)).toBeInTheDocument();
+  });
+
+  it("offers passphrase sealing with a documented portability trade-off", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Export & recovery" })).toBeInTheDocument();
+    });
+
+    const passphraseSealing = screen.getByRole("radio", { name: /Seal with a passphrase/i });
+    expect(passphraseSealing).toBeInTheDocument();
+    await user.click(passphraseSealing);
+
+    expect(
+      screen.getByText(
+        /Opens on any computer running Aura, as long as you remember the passphrase/,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "Export workspace…" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /Seal the archive with a passphrase/,
+    });
+
+    expect(
+      within(dialog).getByText(
+        /The passphrase itself is never stored anywhere; forgetting it means losing the archive/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("rejects a weak passphrase when sealing a portable archive", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(await screen.findByRole("radio", { name: /Seal with a passphrase/i }));
+    await user.click(await screen.findByRole("button", { name: "Export workspace…" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /Seal the archive with a passphrase/,
+    });
+    const draftField = within(dialog).getByPlaceholderText(/At least 12 characters/);
+    const confirmField = within(dialog).getByPlaceholderText(/Type it again/);
+    await user.type(draftField, "short1");
+    await user.type(confirmField, "short1");
+
+    expect(screen.getByText(/Too weak to seal/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /Seal and export/ }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/That passphrase is too weak to seal an archive/),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("seals and exports with a strong passphrase through the native command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(await screen.findByRole("radio", { name: /Seal with a passphrase/i }));
+    await user.click(await screen.findByRole("button", { name: "Export workspace…" }));
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /Seal the archive with a passphrase/,
+    });
+    const draftField = within(dialog).getByPlaceholderText(/At least 12 characters/);
+    const confirmField = within(dialog).getByPlaceholderText(/Type it again/);
+    await user.type(draftField, "correct-horse-battery");
+    await user.type(confirmField, "correct-horse-battery");
+
+    expect(screen.getByText(/Strong enough to seal/)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /Seal and export/ }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("export_workspace_with_passphrase", {
+        passphrase: "correct-horse-battery",
+      });
+    });
   });
 });
 
