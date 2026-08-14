@@ -12,10 +12,14 @@ use crate::db::LocalStore;
 use crate::domain::capture::CaptureRetention;
 use crate::domain::export::{
     ExportEvent, ExportManifest, ExportPayload, ExportRecordCounts, ExportedSetting,
-    EXPORT_FORMAT_VERSION,
+    EXPORT_FORMAT_VERSION, PASSPHRASE_SEALING,
 };
 use crate::domain::project::AuraError;
 use crate::security::key_vault::KeyVault;
+use crate::security::passphrase::{
+    generate_salt, Passphrase, PassphraseKey, ARGON2_M_COST, ARGON2_P_COST, ARGON2_T_COST,
+    PASSPHRASE_SALT_LENGTH,
+};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,10 +30,20 @@ use uuid::Uuid;
 pub const EXPORT_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// On-disk envelope: plaintext manifest plus the sealed record payload.
+///
+/// Version 2 adds the `sealing` discriminator. When the sealing is
+/// `"passphrase"`, the argon2id salt and public derivation parameters are
+/// carried in plaintext next to the manifest (they are non-secret), and the
+/// sealed payload is produced with the passphrase-derived key rather than
+/// the DPAPI-bound workspace key. Version-1 envelopes have no `sealing`
+/// field and are always DPAPI-sealed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportEnvelope {
     pub format_version: i64,
+    /// How the payload was sealed: `"dpapi"` (default) or `"passphrase"`.
+    #[serde(default = "default_sealing")]
+    pub sealing: String,
     #[serde(rename = "exportedAt")]
     pub exported_at: String,
     pub exported_by_version: String,
@@ -38,16 +52,60 @@ pub struct ExportEnvelope {
     /// Hex-encoded: one version byte, the 12-byte nonce, then the AEAD
     /// ciphertext. See `KeyVault::encode_sealed`.
     pub payload_sealed_hex: String,
+    /// Hex-encoded argon2id salt; present only for `"passphrase"` envelopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase_salt_hex: Option<String>,
+    /// Public argon2id parameters; present only for `"passphrase"` envelopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase_params: Option<PassphraseParams>,
+}
+
+fn default_sealing() -> String {
+    "dpapi".to_string()
+}
+
+/// Public argon2id derivation parameters stored next to a passphrase-sealed
+/// payload. These are non-secret: they only let any Aura install re-derive
+/// the same key from the same salt and passphrase.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassphraseParams {
+    pub memory_cost_kib: u32,
+    pub time_cost: u32,
+    pub parallelism: u32,
+}
+
+impl PassphraseParams {
+    pub fn owasp_defaults() -> Self {
+        Self {
+            memory_cost_kib: ARGON2_M_COST,
+            time_cost: ARGON2_T_COST,
+            parallelism: ARGON2_P_COST,
+        }
+    }
 }
 
 pub struct ExportService<'store> {
     store: &'store mut LocalStore,
     key_vault: &'store KeyVault,
+    /// Optional passphrase for opening passphrase-sealed archives. Set by
+    /// the command layer before `apply_import`; never serialized or logged.
+    passphrase: Option<Passphrase>,
 }
 
 impl<'store> ExportService<'store> {
     pub fn new(store: &'store mut LocalStore, key_vault: &'store KeyVault) -> Self {
-        Self { store, key_vault }
+        Self {
+            store,
+            key_vault,
+            passphrase: None,
+        }
+    }
+
+    /// Supplies the passphrase needed to open a passphrase-sealed archive.
+    /// The key is derived inside `open_envelope` and cleared on drop.
+    pub fn set_passphrase(&mut self, passphrase: Option<Passphrase>) {
+        self.passphrase = passphrase;
     }
 
     /// Reads every record the user owns through the typed repositories and
@@ -132,11 +190,126 @@ impl<'store> ExportService<'store> {
 
         Ok(ExportEnvelope {
             format_version: EXPORT_FORMAT_VERSION,
+            sealing: "dpapi".to_string(),
             exported_at: utc_timestamp(),
             exported_by_version: EXPORT_APP_VERSION.to_string(),
             record_counts,
             payload_checksum: checksum,
             payload_sealed_hex,
+            passphrase_salt_hex: None,
+            passphrase_params: None,
+        })
+    }
+
+    /// Reads every record the user owns and seals the payload with a
+    /// passphrase-derived key (EXP-002). The passphrase is validated against
+    /// the native strength gate before any derivation happens, and the
+    /// derived key exists only for the duration of the sealing call.
+    pub fn assemble_passphrase_export(
+        &self,
+        passphrase: Passphrase,
+    ) -> Result<ExportEnvelope, AuraError> {
+        if !passphrase.meets_strength_gate() {
+            return Err(AuraError::InvalidInput(
+                "Choose a stronger passphrase: at least 12 characters, or 8 characters mixing upper case, lower case, and digits.".to_string(),
+            ));
+        }
+
+        let projects = self
+            .store
+            .projects()
+            .list_active()
+            .map_err(|error| {
+                AuraError::Storage(format!(
+                    "Aura could not read its local projects for export: {error}"
+                ))
+            })?
+            .into_iter()
+            .map(|project| serde_json::to_value(&project))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                AuraError::Storage(format!(
+                    "Aura could not encode its local projects for export: {error}"
+                ))
+            })?;
+
+        let preferences = self.store.privacy_preferences()?;
+        let settings_rows = vec![
+            ExportedSetting {
+                key: "privacy_mode".to_string(),
+                value: preferences.privacy_mode.as_str().to_string(),
+            },
+            ExportedSetting {
+                key: "default_capture_retention".to_string(),
+                value: preferences.default_capture_retention.as_str().to_string(),
+            },
+        ];
+        let exclusion_rules = preferences
+            .exclusions
+            .into_iter()
+            .map(|rule| serde_json::to_value(&rule))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| {
+                AuraError::Storage(format!(
+                    "Aura could not encode its local exclusion rules for export: {error}"
+                ))
+            })?;
+
+        let captures = self.collect_captures().map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not read its local captures for export: {error}"
+            ))
+        })?;
+        let decisions = self.collect_decisions().map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not read its local decisions for export: {error}"
+            ))
+        })?;
+
+        let payload = ExportPayload {
+            projects,
+            captures,
+            decisions,
+            exclusion_rules,
+            settings: settings_rows,
+        };
+        let record_counts = payload.record_counts();
+
+        let payload_json = serde_json::to_string(&payload).map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not serialize its local workspace for export: {error}"
+            ))
+        })?;
+        let checksum = hex::encode(Sha256::digest(payload_json.as_bytes()));
+
+        let salt = generate_salt().map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not produce a derivation salt for the export: {error}"
+            ))
+        })?;
+        let key = PassphraseKey::derive(&passphrase, &salt).map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not derive the export key from the passphrase: {error}"
+            ))
+        })?;
+        let sealed_raw = key.seal(payload_json.as_bytes()).map_err(|error| {
+            AuraError::Storage(format!(
+                "Aura could not seal its local workspace with the passphrase key: {error}"
+            ))
+        })?;
+
+        // The passphrase is dropped here; its bytes are zeroed before this
+        // function returns. Only the salt and public parameters persist.
+        Ok(ExportEnvelope {
+            format_version: EXPORT_FORMAT_VERSION,
+            sealing: PASSPHRASE_SEALING.to_string(),
+            exported_at: utc_timestamp(),
+            exported_by_version: EXPORT_APP_VERSION.to_string(),
+            record_counts,
+            payload_checksum: checksum,
+            payload_sealed_hex: hex::encode(&sealed_raw),
+            passphrase_salt_hex: Some(hex::encode(salt)),
+            passphrase_params: Some(PassphraseParams::owasp_defaults()),
         })
     }
 
@@ -183,6 +356,8 @@ impl<'store> ExportService<'store> {
     }
 
     /// Plaintext manifest preview. Returns no decrypted record content.
+    /// Version-1 (DPAPI-only) envelopes remain readable for inventory
+    /// purposes.
     pub fn envelope_manifest(raw: &[u8]) -> Result<ExportManifest, AuraError> {
         let envelope: ExportEnvelope = serde_json::from_slice(raw).map_err(|error| {
             AuraError::InvalidInput(format!(
@@ -190,15 +365,22 @@ impl<'store> ExportService<'store> {
             ))
         })?;
 
-        if envelope.format_version != EXPORT_FORMAT_VERSION {
+        if envelope.format_version > EXPORT_FORMAT_VERSION {
             return Err(AuraError::InvalidInput(format!(
                 "Aura does not support export archives of format version {}; this build expects version {EXPORT_FORMAT_VERSION}.",
+                envelope.format_version
+            )));
+        }
+        if envelope.format_version < 1 {
+            return Err(AuraError::InvalidInput(format!(
+                "Aura does not support export archives of format version {}.",
                 envelope.format_version
             )));
         }
 
         Ok(ExportManifest {
             format_version: envelope.format_version,
+            sealing: envelope.sealing.clone(),
             exported_at: envelope.exported_at,
             exported_by_version: envelope.exported_by_version,
             record_counts: envelope.record_counts,
@@ -207,9 +389,69 @@ impl<'store> ExportService<'store> {
         })
     }
 
+    /// Opens the sealed payload of an envelope with the correct key for its
+    /// sealing variant. Passphrase-sealed envelopes are opened with a key
+    /// derived from the supplied passphrase; a wrong passphrase fails
+    /// authentication here and no record is ever written.
+    fn open_envelope(&self, envelope: &ExportEnvelope) -> Result<Vec<u8>, AuraError> {
+        let sealed_bytes = hex::decode(&envelope.payload_sealed_hex).map_err(|error| {
+            AuraError::InvalidInput(format!(
+                "The exported archive is damaged: its sealed payload is not valid hex. {error}"
+            ))
+        })?;
+
+        if envelope.sealing == PASSPHRASE_SEALING {
+            let salt_hex = envelope.passphrase_salt_hex.as_deref().unwrap_or("");
+            let salt = hex::decode(salt_hex).map_err(|error| {
+                AuraError::InvalidInput(format!(
+                    "The exported archive is damaged: its derivation salt is not valid hex. {error}"
+                ))
+            })?;
+            if salt.len() != PASSPHRASE_SALT_LENGTH {
+                return Err(AuraError::InvalidInput(
+                    "The exported archive is damaged: its derivation salt has an unexpected length.".to_string(),
+                ));
+            }
+            let key = PassphraseKey::derive(
+                self.passphrase.as_ref().ok_or_else(|| {
+                    AuraError::InvalidInput(
+                        "That archive was sealed with a passphrase; the passphrase is required to open it.".to_string(),
+                    )
+                })?,
+                &salt,
+            )
+            .map_err(|error| {
+                AuraError::InvalidInput(format!(
+                    "Aura could not derive the archive key from the passphrase: {error}"
+                ))
+            })?;
+            return key.open(&sealed_bytes).map_err(|error| {
+                AuraError::InvalidInput(format!(
+                    "Aura could not open that archive: its sealed contents failed authentication with the supplied passphrase. {error}"
+                ))
+            });
+        }
+
+        let sealed = KeyVault::decode_sealed(&sealed_bytes).map_err(|error| {
+            AuraError::InvalidInput(format!(
+                "The exported archive is damaged: its sealed envelope could not be read. {error}"
+            ))
+        })?;
+        self.key_vault.open(&sealed).map_err(|error| {
+            AuraError::InvalidInput(format!(
+                "Aura could not open that archive: its sealed contents failed authentication. The archive may be damaged or was created on a computer with a different workspace key. {error}"
+            ))
+        })
+    }
+
     /// Decrypts, validates, and applies an imported archive. The entire
     /// import happens inside one transaction: on any conflict or validation
     /// failure nothing is applied and the original workspace is untouched.
+    ///
+    /// A DPAPI-sealed envelope (version 1 or version 2 `"dpapi"` sealing)
+    /// opens with the local workspace key. A `"passphrase"` envelope
+    /// requires the passphrase that sealed it; a wrong passphrase fails
+    /// authentication before any record is written.
     pub fn apply_import(&mut self, raw: &[u8]) -> Result<ExportRecordCounts, AuraError> {
         let envelope: ExportEnvelope = serde_json::from_slice(raw).map_err(|error| {
             AuraError::InvalidInput(format!(
@@ -217,28 +459,20 @@ impl<'store> ExportService<'store> {
             ))
         })?;
 
-        if envelope.format_version != EXPORT_FORMAT_VERSION {
+        if envelope.format_version > EXPORT_FORMAT_VERSION {
             return Err(AuraError::InvalidInput(format!(
                 "Aura does not support export archives of format version {}; this build expects version {EXPORT_FORMAT_VERSION}.",
                 envelope.format_version
             )));
         }
+        if envelope.format_version < 1 {
+            return Err(AuraError::InvalidInput(format!(
+                "Aura does not support export archives of format version {}.",
+                envelope.format_version
+            )));
+        }
 
-        let sealed_bytes = hex::decode(&envelope.payload_sealed_hex).map_err(|error| {
-            AuraError::InvalidInput(format!(
-                "The exported archive is damaged: its sealed payload is not valid hex. {error}"
-            ))
-        })?;
-        let sealed = KeyVault::decode_sealed(&sealed_bytes).map_err(|error| {
-            AuraError::InvalidInput(format!(
-                "The exported archive is damaged: its sealed envelope could not be read. {error}"
-            ))
-        })?;
-        let payload_bytes = self.key_vault.open(&sealed).map_err(|error| {
-            AuraError::InvalidInput(format!(
-                "Aura could not open that archive: its sealed contents failed authentication. The archive may be damaged or was created on a computer with a different workspace key. {error}"
-            ))
-        })?;
+        let payload_bytes = self.open_envelope(&envelope)?;
 
         let payload_json = String::from_utf8(payload_bytes).map_err(|error| {
             AuraError::InvalidInput(format!(
@@ -1289,5 +1523,169 @@ mod tests {
         assert!(!json.contains("password"));
         assert!(!json.contains("http://"));
         assert!(!json.contains("https://"));
+    }
+
+    // -----------------------------------------------------------------------
+    // EXP-002: passphrase-sealed portable archives.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn passphrase_export_roundtrips_on_a_completely_fresh_installation() {
+        let (mut source_store, source_vault) = fresh_workspace();
+        seed_workspace(&mut source_store);
+
+        let passphrase = Passphrase::new("Twilight-Sparkle-42".to_string());
+        let envelope = service(&mut source_store, &source_vault)
+            .assemble_passphrase_export(Passphrase::new("Twilight-Sparkle-42".to_string()))
+            .expect("assemble passphrase export");
+
+        assert_eq!(envelope.format_version, EXPORT_FORMAT_VERSION);
+        assert_eq!(envelope.sealing, PASSPHRASE_SEALING);
+        assert_eq!(envelope.record_counts.projects, 1);
+        assert_eq!(envelope.record_counts.decisions, 1);
+        assert!(envelope.passphrase_salt_hex.is_some());
+        assert!(envelope.passphrase_params.is_some());
+
+        let manifest = ExportService::envelope_manifest(
+            &serde_json::to_vec(&envelope).expect("encode envelope"),
+        )
+        .expect("read manifest");
+        assert_eq!(manifest.sealing, PASSPHRASE_SEALING);
+
+        // Restore on a brand-new workspace whose key vault was never touched
+        // by the exporter. A passphrase archive must not depend on the
+        // exporting machine's workspace key.
+        let (mut destination, _destination_vault) = fresh_workspace();
+        let mut service = service(&mut destination, &_destination_vault);
+        service.set_passphrase(Some(passphrase));
+        let raw = serde_json::to_vec(&envelope).expect("encode envelope");
+        let counts = service.apply_import(&raw).expect("apply import");
+        assert_eq!(counts.projects, 1);
+        assert_eq!(counts.decisions, 1);
+
+        let connection = destination.connection_ref();
+        let projects: i64 = connection
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+            .expect("count projects");
+        assert_eq!(projects, 1, "the project must have been recovered");
+    }
+
+    #[test]
+    fn passphrase_export_rejects_a_weak_passphrase() {
+        let (mut store, key_vault) = fresh_workspace();
+        seed_workspace(&mut store);
+
+        let weak = service(&mut store, &key_vault)
+            .assemble_passphrase_export(Passphrase::new("weak1".to_string()));
+        assert!(
+            weak.is_err(),
+            "a weak passphrase must not produce an archive"
+        );
+
+        let strong = service(&mut store, &key_vault)
+            .assemble_passphrase_export(Passphrase::new("Strong-Passphrase-11".to_string()));
+        assert!(strong.is_ok(), "a strong passphrase must be accepted");
+    }
+
+    #[test]
+    fn passphrase_archive_requires_its_passphrase_to_restore() {
+        let (mut source_store, source_vault) = fresh_workspace();
+        seed_workspace(&mut source_store);
+        let envelope = service(&mut source_store, &source_vault)
+            .assemble_passphrase_export(Passphrase::new("Twilight-Sparkle-42".to_string()))
+            .expect("assemble passphrase export");
+        let raw = serde_json::to_vec(&envelope).expect("encode envelope");
+
+        let (mut destination, destination_vault) = fresh_workspace();
+
+        let without = service(&mut destination, &destination_vault).apply_import(&raw);
+        assert!(
+            without.is_err(),
+            "an archive without its passphrase must fail to open"
+        );
+
+        let wrong = {
+            let mut service = service(&mut destination, &destination_vault);
+            service.set_passphrase(Some(Passphrase::new("Twilight-Sparkle-41".to_string())));
+            service.apply_import(&raw)
+        };
+        assert!(
+            wrong.is_err(),
+            "a wrong passphrase must fail authentication before any record is written"
+        );
+
+        // No record survived either failure; the destination workspace stays
+        // empty.
+        let projects: i64 = destination
+            .connection_ref()
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+            .expect("count projects");
+        assert_eq!(projects, 0, "failed imports must not apply partial data");
+    }
+
+    #[test]
+    fn passphrase_archive_survives_being_read_on_a_different_machine() {
+        // Simulates the portable restore: the envelope travels as raw bytes
+        // to a fresh installation with a different key vault, and the
+        // destination derives the same key from the stored salt plus the
+        // remembered passphrase.
+        let (mut source_store, source_vault) = fresh_workspace();
+        seed_workspace(&mut source_store);
+        let raw = serde_json::to_vec(
+            &service(&mut source_store, &source_vault)
+                .assemble_passphrase_export(Passphrase::new("Twilight-Sparkle-42".to_string()))
+                .expect("assemble"),
+        )
+        .expect("encode");
+
+        let (mut destination, _destination_vault) = fresh_workspace();
+        let mut service = service(&mut destination, &_destination_vault);
+        service.set_passphrase(Some(Passphrase::new("Twilight-Sparkle-42".to_string())));
+        let counts = service.apply_import(&raw).expect("apply import");
+        assert_eq!(counts.captures, 1);
+        assert_eq!(counts.exclusion_rules, 1);
+        assert_eq!(counts.settings, 2);
+    }
+
+    #[test]
+    fn version_one_dpapi_archive_still_opens() {
+        // A v1 envelope has no `sealing` field; deserialization must fall
+        // back to the DPAPI default, and the import must still use the bound
+        // workspace key (which a DPAPI archive requires).
+        let (mut source_store, source_vault) = fresh_workspace();
+        seed_workspace(&mut source_store);
+        let mut v1_envelope: ExportEnvelope =
+            serde_json::from_slice(&envelope_bytes(&mut source_store, &source_vault))
+                .expect("decode");
+        v1_envelope.format_version = 1;
+        let raw = serde_json::to_vec(&v1_envelope).expect("encode v1 envelope");
+
+        let (mut destination, destination_vault) = fresh_workspace_with_shared_key(&source_vault);
+        let counts = service(&mut destination, &destination_vault)
+            .apply_import(&raw)
+            .expect("v1 archives remain importable");
+        assert_eq!(counts.projects, 1);
+    }
+
+    #[test]
+    fn envelope_serialization_carries_public_parameters_only() {
+        let (mut store, key_vault) = fresh_workspace();
+        seed_workspace(&mut store);
+        let envelope = service(&mut store, &key_vault)
+            .assemble_passphrase_export(Passphrase::new("Twilight-Sparkle-42".to_string()))
+            .expect("assemble");
+
+        let json = serde_json::to_string(&envelope).expect("serialize envelope");
+        // The passphrase itself, its bytes, and any derivation output must
+        // not appear in the transport form. Salt and parameters are
+        // intentionally public.
+        assert!(!json.contains("Twilight-Sparkle-42"));
+        assert!(json.contains("\"sealing\":\"passphrase\""));
+        assert!(json.contains("\"memoryCostKib\":19456"));
+        assert!(envelope.passphrase_salt_hex.is_some());
+        assert_eq!(
+            envelope.passphrase_params,
+            Some(PassphraseParams::owasp_defaults())
+        );
     }
 }

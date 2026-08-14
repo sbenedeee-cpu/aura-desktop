@@ -124,6 +124,8 @@ type ExportRecordCounts = {
 
 type ExportManifest = {
   formatVersion: number;
+  /// How the archive was sealed: `"dpapi"` (machine key) or `"passphrase"`.
+  sealing: "dpapi" | "passphrase";
   exportedAt: string;
   exportedByVersion: string;
   recordCounts: ExportRecordCounts;
@@ -283,6 +285,14 @@ function App() {
   const [exportNotice, setExportNotice] = useState("");
   const [exportBusy, setExportBusy] = useState(false);
   const [exportManifest, setExportManifest] = useState<ExportManifest | null>(null);
+  const [exportSealing, setExportSealing] = useState<"dpapi" | "passphrase">("dpapi");
+  const [passphraseModalOpen, setPassphraseModalOpen] = useState(false);
+  const [passphraseDraft, setPassphraseDraft] = useState("");
+  const [passphraseConfirmDraft, setPassphraseConfirmDraft] = useState("");
+  const [passphraseDraftError, setPassphraseDraftError] = useState("");
+  const [passphraseStrength, setPassphraseStrength] = useState<"weak" | "strong">("weak");
+  const [importPassphrase, setImportPassphrase] = useState("");
+  const [importPassphraseError, setImportPassphraseError] = useState("");
 
   const selectedProject = snapshot.selectedProject;
 
@@ -432,6 +442,18 @@ function App() {
   }
 
   async function exportWorkspace() {
+    if (exportSealing === "passphrase") {
+      setPassphraseDraft("");
+      setPassphraseConfirmDraft("");
+      setPassphraseDraftError("");
+      setPassphraseStrength("weak");
+      setPassphraseModalOpen(true);
+      return;
+    }
+    await exportWorkspaceDpapi();
+  }
+
+  async function exportWorkspaceDpapi() {
     setExportBusy(true);
     setExportError("");
     setExportNotice("");
@@ -452,20 +474,73 @@ function App() {
     }
   }
 
+  function isPassphraseStrong(text: string): boolean {
+    return (
+      text.length >= 12 ||
+      (text.length >= 8 && /[a-z]/.test(text) && /[A-Z]/.test(text) && /[0-9]/.test(text))
+    );
+  }
+
+  function updatePassphraseDraft(text: string) {
+    setPassphraseDraft(text);
+    setPassphraseStrength(isPassphraseStrong(text) ? "strong" : "weak");
+  }
+
+  async function confirmPassphraseExport() {
+    if (passphraseDraft !== passphraseConfirmDraft) {
+      setPassphraseDraftError("The passphrases do not match. Type it again so Aura can be sure.");
+      return;
+    }
+    if (!isPassphraseStrong(passphraseDraft)) {
+      setPassphraseDraftError(
+        "That passphrase is too weak to seal an archive. Use at least 12 characters, or 8 characters mixing upper case, lower case, and digits.",
+      );
+      return;
+    }
+    setPassphraseDraftError("");
+    setPassphraseModalOpen(false);
+    setExportBusy(true);
+    setExportError("");
+    setExportNotice("");
+    setExportManifest(null);
+    try {
+      const result = await invoke<{ exportedPath: string }>("export_workspace_with_passphrase", {
+        passphrase: passphraseDraft,
+      });
+      setPassphraseDraft("");
+      setPassphraseConfirmDraft("");
+      setExportNotice(
+        result?.exportedPath
+          ? `Workspace archive saved to ${result.exportedPath}`
+          : "Workspace archive saved locally, sealed with your passphrase. Remember it: Aura cannot recover a passphrase-sealed archive without it.",
+      );
+    } catch {
+      setExportError(
+        "Aura could not export the workspace. The export was cancelled or the file could not be written.",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   async function importWorkspace() {
     setExportBusy(true);
     setExportError("");
     setExportNotice("");
     try {
-      await invoke<null>("import_workspace", {});
+      await invoke<null>("import_workspace", {
+        input: { passphrase: importPassphrase || undefined },
+      });
+      setImportPassphrase("");
+      setImportPassphraseError("");
       setExportNotice(
         "Workspace archive restored. Aura reloaded its local projects, captures, and decisions.",
       );
       await loadPrivacyPreferences();
       setSnapshot(await invoke<WorkspaceSnapshot>("get_workspace_snapshot"));
     } catch {
-      setExportError(
-        "Aura could not restore that archive. It may be damaged, use an unsupported format, or belong to a different workspace key.",
+      setImportPassphraseError(
+        "Aura could not restore that archive. It may be damaged, use an unsupported format, belong to a different workspace key, or need the passphrase that sealed it.",
       );
     } finally {
       setExportBusy(false);
@@ -481,6 +556,11 @@ function App() {
     } catch {
       setExportError("Aura could not prepare the export preview.");
     }
+  }
+
+  function updateImportPassphrase(text: string) {
+    setImportPassphrase(text);
+    setImportPassphraseError("");
   }
 
   async function addExclusion(kind: ExclusionKind, value: string) {
@@ -834,13 +914,27 @@ function App() {
             exportBusy={exportBusy}
             exportManifest={exportManifest}
             exportNotice={exportNotice}
+            exportSealing={exportSealing}
+            importPassphrase={importPassphrase}
+            importPassphraseError={importPassphraseError}
             isLoading={isLoadingPreferences}
             isSaving={isSavingPreferences}
             onAddExclusion={addExclusion}
+            onConfirmPassphraseExport={confirmPassphraseExport}
             onExportWorkspace={exportWorkspace}
+            onImportPassphraseChange={updateImportPassphrase}
             onImportWorkspace={importWorkspace}
+            onPassphraseDraftChange={updatePassphraseDraft}
+            onPassphraseConfirmDraftChange={setPassphraseConfirmDraft}
+            onPassphraseModalClose={() => setPassphraseModalOpen(false)}
+            passphraseDraft={passphraseDraft}
+            passphraseConfirmDraft={passphraseConfirmDraft}
+            passphraseDraftError={passphraseDraftError}
+            passphraseModalOpen={passphraseModalOpen}
+            passphraseStrength={passphraseStrength}
             onReload={() => void loadPrivacyPreferences()}
             onSavePreferences={savePrivacyPreferences}
+            onSealingChange={setExportSealing}
             onShowExportManifest={showExportManifest}
             onToggleExclusion={changeExclusionState}
             preferences={privacyPreferences}
@@ -1502,6 +1596,101 @@ function ActivityRail({
   );
 }
 
+/// EXP-002: confirmation dialog for sealing the export with a passphrase.
+/// The passphrase is typed twice to avoid a typo that would lock the user
+/// out of their own archive; the strength gate mirrors the native argon2id
+/// requirements so a weak passphrase never leaves this device.
+function PassphraseExportDialog({
+  busy,
+  confirmDraft,
+  draft,
+  error,
+  strength,
+  onCancel,
+  onConfirmDraftChange,
+  onDraftChange,
+  onSubmit,
+}: {
+  busy: boolean;
+  confirmDraft: string;
+  draft: string;
+  error: string;
+  strength: "weak" | "strong";
+  onCancel: () => void;
+  onConfirmDraftChange: (value: string) => void;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" onMouseDown={onCancel} role="presentation">
+      <section
+        aria-labelledby="passphrase-export-heading"
+        aria-modal="true"
+        className="dialog-card"
+        onKeyDown={(event) => event.key === "Escape" && onCancel()}
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <p className="section-kicker">PORTABLE ARCHIVE</p>
+        <h2 id="passphrase-export-heading">Seal the archive with a passphrase.</h2>
+        <p className="dialog-intro">
+          Aura derives a strong key from your passphrase using argon2id and seals the export with
+          it, so the archive can be restored on any computer running Aura. The passphrase itself is
+          never stored anywhere; forgetting it means losing the archive.
+        </p>
+        <label className="field">
+          <span>Passphrase</span>
+          <input
+            autoFocus
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(event) => void onDraftChange(event.target.value)}
+            placeholder="At least 12 characters, or 8 with mixed case and digits"
+            type="password"
+            value={draft}
+          />
+          <span
+            className={strength === "strong" ? "strength-meter is-strong" : "strength-meter"}
+            role="status"
+          >
+            {strength === "strong" ? "Strong enough to seal" : "Too weak to seal"}
+          </span>
+        </label>
+        <label className="field">
+          <span>Repeat the passphrase</span>
+          <input
+            autoComplete="new-password"
+            disabled={busy}
+            onChange={(event) => void onConfirmDraftChange(event.target.value)}
+            placeholder="Type it again so Aura can be sure"
+            type="password"
+            value={confirmDraft}
+          />
+        </label>
+        {error && (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button className="secondary-action" disabled={busy} onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button
+            className="primary-action"
+            disabled={busy || !draft || !confirmDraft}
+            onClick={onSubmit}
+            type="button"
+          >
+            Seal and export&hellip;
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ProjectDialog({
   busy,
   onClose,
@@ -1890,13 +2079,27 @@ function SettingsView({
   exportBusy,
   exportManifest,
   exportNotice,
+  exportSealing,
+  importPassphrase,
+  importPassphraseError,
   isLoading,
   isSaving,
   onAddExclusion,
+  onConfirmPassphraseExport,
   onExportWorkspace,
+  onImportPassphraseChange,
   onImportWorkspace,
+  onPassphraseDraftChange,
+  onPassphraseConfirmDraftChange,
+  onPassphraseModalClose,
+  passphraseDraft,
+  passphraseConfirmDraft,
+  passphraseDraftError,
+  passphraseModalOpen,
+  passphraseStrength,
   onReload,
   onSavePreferences,
+  onSealingChange,
   onShowExportManifest,
   onToggleExclusion,
   preferences,
@@ -1906,12 +2109,26 @@ function SettingsView({
   exportBusy: boolean;
   exportManifest: ExportManifest | null;
   exportNotice: string;
+  exportSealing: "dpapi" | "passphrase";
+  importPassphrase: string;
+  importPassphraseError: string;
   isLoading: boolean;
   isSaving: boolean;
   onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onConfirmPassphraseExport: () => Promise<void>;
   onExportWorkspace: () => Promise<void>;
+  onImportPassphraseChange: (value: string) => void;
   onImportWorkspace: () => Promise<void>;
+  onPassphraseDraftChange: (value: string) => void;
+  onPassphraseConfirmDraftChange: (value: string) => void;
+  onPassphraseModalClose: () => void;
+  passphraseDraft: string;
+  passphraseConfirmDraft: string;
+  passphraseDraftError: string;
+  passphraseModalOpen: boolean;
+  passphraseStrength: "weak" | "strong";
   onReload: () => void;
+  onSealingChange: (sealing: "dpapi" | "passphrase") => void;
   onSavePreferences: (
     privacyMode: PrivacyMode,
     defaultCaptureRetention: CaptureRetention,
@@ -1959,10 +2176,25 @@ function SettingsView({
       exportBusy={exportBusy}
       exportManifest={exportManifest}
       exportNotice={exportNotice}
+      exportSealing={exportSealing}
+      importPassphrase={importPassphrase}
+      importPassphraseError={importPassphraseError}
       isSaving={isSaving}
       onAddExclusion={onAddExclusion}
+      onConfirmPassphraseExport={onConfirmPassphraseExport}
       onExportWorkspace={onExportWorkspace}
+      onImportPassphraseChange={onImportPassphraseChange}
       onImportWorkspace={onImportWorkspace}
+      onPassphraseDraftChange={onPassphraseDraftChange}
+      onPassphraseConfirmDraftChange={onPassphraseConfirmDraftChange}
+      onPassphraseModalClose={onPassphraseModalClose}
+      passphraseDraft={passphraseDraft}
+      passphraseConfirmDraft={passphraseConfirmDraft}
+      passphraseDraftError={passphraseDraftError}
+      passphraseModalOpen={passphraseModalOpen}
+      passphraseStrength={passphraseStrength}
+      onReload={onReload}
+      onSealingChange={onSealingChange}
       onSavePreferences={onSavePreferences}
       keyVaultStatus={keyVaultStatus}
       loadKeyVaultStatus={loadKeyVaultStatus}
@@ -1979,12 +2211,27 @@ function SettingsForm({
   exportBusy,
   exportManifest,
   exportNotice,
+  exportSealing,
+  importPassphrase,
+  importPassphraseError,
   isSaving,
   keyVaultStatus,
   loadKeyVaultStatus,
   onAddExclusion,
+  onConfirmPassphraseExport,
   onExportWorkspace,
+  onImportPassphraseChange,
   onImportWorkspace,
+  onPassphraseDraftChange,
+  onPassphraseConfirmDraftChange,
+  onPassphraseModalClose,
+  passphraseDraft,
+  passphraseConfirmDraft,
+  passphraseDraftError,
+  passphraseModalOpen,
+  passphraseStrength,
+  onReload,
+  onSealingChange,
   onSavePreferences,
   onToggleExclusion,
   onShowExportManifest,
@@ -1995,12 +2242,27 @@ function SettingsForm({
   exportBusy: boolean;
   exportManifest: ExportManifest | null;
   exportNotice: string;
+  exportSealing: "dpapi" | "passphrase";
+  importPassphrase: string;
+  importPassphraseError: string;
   isSaving: boolean;
   keyVaultStatus: KeyVaultStatus | null;
   loadKeyVaultStatus: () => void;
   onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onConfirmPassphraseExport: () => Promise<void>;
   onExportWorkspace: () => Promise<void>;
+  onImportPassphraseChange: (value: string) => void;
   onImportWorkspace: () => Promise<void>;
+  onPassphraseDraftChange: (value: string) => void;
+  onPassphraseConfirmDraftChange: (value: string) => void;
+  onPassphraseModalClose: () => void;
+  passphraseDraft: string;
+  passphraseConfirmDraft: string;
+  passphraseDraftError: string;
+  passphraseModalOpen: boolean;
+  passphraseStrength: "weak" | "strong";
+  onReload: () => void;
+  onSealingChange: (sealing: "dpapi" | "passphrase") => void;
   onSavePreferences: (
     privacyMode: PrivacyMode,
     defaultCaptureRetention: CaptureRetention,
@@ -2199,10 +2461,37 @@ function SettingsForm({
           </div>
           <p className="settings-note">
             Export writes your entire encrypted workspace, including the key-protecting envelope, to
-            a single sealed archive you keep on your own device. The archive can only be opened by
-            an Aura installation with the same workspace key, so losing that key means losing the
-            archive. Nothing is ever sent to a network.
+            a single sealed archive you keep on your own device. Nothing is ever sent to a network.
           </p>
+          <p className="section-kicker">HOW TO SEAL THE ARCHIVE</p>
+          <label className="setting-choice">
+            <input
+              checked={exportSealing === "dpapi"}
+              onChange={() => void onSealingChange("dpapi")}
+              name="export-sealing"
+              type="radio"
+            />
+            <span>
+              <strong>Seal with this computer&rsquo;s key</strong>
+              <br />
+              Fastest, and the default. The archive opens only on an Aura installation holding the
+              same workspace key, so losing that key means losing the archive.
+            </span>
+          </label>
+          <label className="setting-choice">
+            <input
+              checked={exportSealing === "passphrase"}
+              onChange={() => void onSealingChange("passphrase")}
+              name="export-sealing"
+              type="radio"
+            />
+            <span>
+              <strong>Seal with a passphrase</strong>
+              <br />
+              Opens on any computer running Aura, as long as you remember the passphrase. Aura
+              derives a strong key from it and never stores it anywhere.
+            </span>
+          </label>
           <div className="settings-actions">
             <button
               className="primary-action"
@@ -2212,6 +2501,19 @@ function SettingsForm({
             >
               Export workspace&hellip;
             </button>
+            {exportSealing === "passphrase" && passphraseModalOpen && (
+              <PassphraseExportDialog
+                busy={exportBusy}
+                confirmDraft={passphraseConfirmDraft}
+                draft={passphraseDraft}
+                error={passphraseDraftError}
+                strength={passphraseStrength}
+                onCancel={onPassphraseModalClose}
+                onConfirmDraftChange={onPassphraseConfirmDraftChange}
+                onDraftChange={onPassphraseDraftChange}
+                onSubmit={() => void onConfirmPassphraseExport()}
+              />
+            )}
             <button
               className="quiet-action"
               disabled={exportBusy}
@@ -2228,6 +2530,26 @@ function SettingsForm({
               Preview export contents
             </button>
           </div>
+          <p className="section-kicker">ARCHIVE PASSPHRASE</p>
+          <p className="settings-note">
+            Enter the passphrase only when restoring an archive that was sealed with one. Archives
+            sealed with this computer&rsquo;s key ignore this field.
+          </p>
+          <input
+            aria-label="Passphrase for restoring a sealed archive"
+            autoComplete="off"
+            className="text-input"
+            disabled={exportBusy}
+            onChange={(event) => void onImportPassphraseChange(event.target.value)}
+            placeholder="Restoration passphrase (optional)"
+            type="password"
+            value={importPassphrase}
+          />
+          {importPassphraseError && (
+            <p className="field-error" role="alert">
+              {importPassphraseError}
+            </p>
+          )}
           {exportNotice && (
             <p className="settings-note" role="status">
               {exportNotice}
@@ -2243,6 +2565,14 @@ function SettingsForm({
               <div>
                 <dt>Format version</dt>
                 <dd>{exportManifest.formatVersion}</dd>
+              </div>
+              <div>
+                <dt>Sealed with</dt>
+                <dd>
+                  {exportManifest.sealing === "passphrase"
+                    ? "Passphrase"
+                    : "This computer\u2019s key"}
+                </dd>
               </div>
               <div>
                 <dt>Exported at</dt>
@@ -2295,6 +2625,9 @@ function SettingsForm({
           </div>
           <button className="quiet-action" type="button" onClick={() => void loadKeyVaultStatus()}>
             Check key protection
+          </button>
+          <button className="quiet-action" type="button" onClick={() => void onReload()}>
+            Reload preferences
           </button>
           {keyVaultStatus && (
             <p className="settings-note">

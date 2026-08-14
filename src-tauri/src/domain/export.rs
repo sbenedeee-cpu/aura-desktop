@@ -9,7 +9,16 @@ use serde::{Deserialize, Serialize};
 
 /// On-disk envelope format version. The manifest carries it so future format
 /// changes are a controlled migration rather than a silent break.
-pub const EXPORT_FORMAT_VERSION: i64 = 1;
+pub const EXPORT_FORMAT_VERSION: i64 = 2;
+
+/// Sealing discriminator carried in the envelope. `"dpapi"` keeps the
+/// EXP-001 behavior; `"passphrase"` marks an archive re-sealed with a
+/// passphrase-derived key (EXP-002). Absent in version-1 envelopes, where
+/// the DPAPI boundary is the only supported sealing. Used by the command
+/// layer to decide which key must open an archive.
+#[allow(dead_code)]
+pub const DPAPI_SEALING: &str = "dpapi";
+pub const PASSPHRASE_SEALING: &str = "passphrase";
 
 /// Plaintext, human-readable inventory of an exported archive. No decrypted
 /// record content ever appears here.
@@ -17,6 +26,8 @@ pub const EXPORT_FORMAT_VERSION: i64 = 1;
 #[serde(rename_all = "camelCase")]
 pub struct ExportManifest {
     pub format_version: i64,
+    /// How the payload was sealed: `"dpapi"` or `"passphrase"`.
+    pub sealing: String,
     pub exported_at: String,
     pub exported_by_version: String,
     pub record_counts: ExportRecordCounts,
