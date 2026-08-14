@@ -81,6 +81,14 @@ impl LocalStore {
         Ok(Self { connection })
     }
 
+    pub fn connection_ref(&self) -> &Connection {
+        &self.connection
+    }
+
+    pub fn connection_ref_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
+
     pub fn privacy_preferences(&self) -> Result<PrivacyPreferences, AuraError> {
         let privacy_mode = self
             .setting_value("privacy_mode")?
@@ -347,15 +355,14 @@ impl LocalStore {
 #[cfg(test)]
 mod tests {
     use super::{migrations::run, LocalStore};
-    use crate::db::migrations::current_version;
     use crate::domain::settings::{ExclusionKind, PrivacyMode, UpdatePrivacyPreferencesInput};
-    use rusqlite::{params, Connection};
+    use rusqlite::Connection;
 
     #[test]
     fn migration_creates_an_empty_local_workspace_with_privacy_controls() {
         let store = LocalStore::open_in_memory().expect("test database should migrate");
 
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 5);
 
         let preferences = store.privacy_preferences().expect("preferences");
         assert_eq!(preferences.privacy_mode.as_str(), "manual_only");
@@ -377,10 +384,10 @@ mod tests {
             .execute_batch("UPDATE settings SET value = 'focused' WHERE key = 'privacy_mode';")
             .expect("legacy fixture");
 
-        run(&mut connection).expect("fourth migration should apply");
+        run(&mut connection).expect("fifth migration should apply");
 
         let store = LocalStore::open_in_memory().expect("store");
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 5);
         assert_eq!(
             store
                 .privacy_preferences()
@@ -402,7 +409,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count");
-        assert_eq!(applied_count, 4);
+        assert_eq!(applied_count, 5);
     }
 
     #[test]
@@ -498,7 +505,7 @@ mod tests {
 
     #[test]
     fn unknown_privacy_mode_value_is_rejected_on_read() {
-        let store = LocalStore::open_in_memory().expect("store should open");
+        let _store = LocalStore::open_in_memory().expect("store should open");
 
         assert_eq!(
             PrivacyMode::from_store("camera")

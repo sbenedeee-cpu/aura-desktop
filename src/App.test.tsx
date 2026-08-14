@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -179,6 +179,167 @@ describe("Aura Continuity Desk privacy boundary", () => {
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith("select_project", { projectId: "eternal" });
     });
+  });
+});
+
+const sampleExportManifest = {
+  formatVersion: 1,
+  exportedAt: "2026-08-14T09:12:00Z",
+  exportedByVersion: "0.1.0",
+  recordCounts: {
+    projects: 1,
+    captures: 3,
+    decisions: 2,
+    exclusionRules: 1,
+    settings: 2,
+  },
+  payloadChecksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  payloadSealedLength: 1440,
+};
+
+describe("Aura export and recovery controls", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_workspace_snapshot") {
+        return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "get_privacy_preferences") {
+        return Promise.resolve(persistedPreferences);
+      }
+      if (command === "list_decisions") {
+        return Promise.resolve([]);
+      }
+      if (command === "export_workspace") {
+        return Promise.resolve({ exportedPath: "C:\\Users\\Eternal\\Documents\\aura-export.json" });
+      }
+      if (command === "export_manifest") {
+        return Promise.resolve(sampleExportManifest);
+      }
+
+      return Promise.resolve(undefined);
+    });
+  });
+
+  it("exports the sealed workspace through the native export command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Export & recovery" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Export workspace…" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("export_workspace", {});
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Workspace archive saved to/)).toBeInTheDocument();
+    });
+  });
+
+  it("starts a transactional restore through the native import command", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await user.click(screen.getByRole("button", { name: "Restore from archive…" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("import_workspace", {});
+    });
+  });
+
+  it("reports an error when the export is cancelled or the file cannot be written", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_workspace_snapshot") {
+        return Promise.resolve(persistedWorkspace);
+      }
+      if (command === "get_privacy_preferences") {
+        return Promise.resolve(persistedPreferences);
+      }
+      if (command === "list_decisions") {
+        return Promise.resolve([]);
+      }
+      if (command === "export_workspace") {
+        return Promise.reject(new Error("dialog cancelled"));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Export workspace…" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Aura could not export the workspace/)).toBeInTheDocument();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("export_workspace", {});
+  });
+
+  it("shows a typed export manifest preview with the sealed record counts", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+    await user.click(await screen.findByRole("button", { name: "Preview export contents" }));
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("export_manifest", {});
+    });
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenLastCalledWith("export_manifest", {});
+    });
+
+    const manifestList = await screen.findByLabelText("Export contents");
+    const captureCount = within(manifestList)
+      .getByText("Captures")
+      .closest("div")
+      ?.querySelector("dd");
+    expect(captureCount?.textContent).toBe("3");
+    const decisionCount = within(manifestList)
+      .getByText("Decisions")
+      .closest("div")
+      ?.querySelector("dd");
+    expect(decisionCount?.textContent).toBe("2");
+    const ruleCount = within(manifestList)
+      .getByText("Exclusion rules")
+      .closest("div")
+      ?.querySelector("dd");
+    expect(ruleCount?.textContent).toBe("1");
+  });
+
+  it("documents the key-binding trade-off and the local-only boundary", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Export & recovery" })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(/can only be opened by an Aura installation with the same workspace key/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is ever sent to a network/)).toBeInTheDocument();
   });
 });
 

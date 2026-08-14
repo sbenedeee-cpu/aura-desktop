@@ -114,6 +114,23 @@ type PrivacyPreferences = {
   exclusions: ExclusionRule[];
 };
 
+type ExportRecordCounts = {
+  projects: number;
+  captures: number;
+  decisions: number;
+  exclusionRules: number;
+  settings: number;
+};
+
+type ExportManifest = {
+  formatVersion: number;
+  exportedAt: string;
+  exportedByVersion: string;
+  recordCounts: ExportRecordCounts;
+  payloadChecksum: string;
+  payloadSealedLength: number;
+};
+
 const emptySnapshot: WorkspaceSnapshot = {
   privacyMode: "manual_only",
   selectedProject: null,
@@ -262,6 +279,10 @@ function App() {
   const [isLoadingPreferences, setIsLoadingPreferences] = useState(false);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [settingsError, setSettingsError] = useState("");
+  const [exportError, setExportError] = useState("");
+  const [exportNotice, setExportNotice] = useState("");
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportManifest, setExportManifest] = useState<ExportManifest | null>(null);
 
   const selectedProject = snapshot.selectedProject;
 
@@ -408,6 +429,58 @@ function App() {
       privacyPreferences?.defaultCaptureRetention || "until_deleted",
       "sidebar",
     );
+  }
+
+  async function exportWorkspace() {
+    setExportBusy(true);
+    setExportError("");
+    setExportNotice("");
+    setExportManifest(null);
+    try {
+      const result = await invoke<{ exportedPath: string }>("export_workspace", {});
+      setExportNotice(
+        result?.exportedPath
+          ? `Workspace archive saved to ${result.exportedPath}`
+          : "Workspace archive saved locally. Keep the file safe; it can only be opened by an Aura installation with the same workspace key.",
+      );
+    } catch {
+      setExportError(
+        "Aura could not export the workspace. The export was cancelled or the file could not be written.",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  async function importWorkspace() {
+    setExportBusy(true);
+    setExportError("");
+    setExportNotice("");
+    try {
+      await invoke<null>("import_workspace", {});
+      setExportNotice(
+        "Workspace archive restored. Aura reloaded its local projects, captures, and decisions.",
+      );
+      await loadPrivacyPreferences();
+      setSnapshot(await invoke<WorkspaceSnapshot>("get_workspace_snapshot"));
+    } catch {
+      setExportError(
+        "Aura could not restore that archive. It may be damaged, use an unsupported format, or belong to a different workspace key.",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  async function showExportManifest() {
+    setExportError("");
+    setExportManifest(null);
+    try {
+      const manifest = await invoke<ExportManifest>("export_manifest", {});
+      setExportManifest(manifest);
+    } catch {
+      setExportError("Aura could not prepare the export preview.");
+    }
   }
 
   async function addExclusion(kind: ExclusionKind, value: string) {
@@ -757,11 +830,18 @@ function App() {
         ) : (
           <SettingsView
             error={settingsError}
+            exportError={exportError}
+            exportBusy={exportBusy}
+            exportManifest={exportManifest}
+            exportNotice={exportNotice}
             isLoading={isLoadingPreferences}
             isSaving={isSavingPreferences}
             onAddExclusion={addExclusion}
+            onExportWorkspace={exportWorkspace}
+            onImportWorkspace={importWorkspace}
             onReload={() => void loadPrivacyPreferences()}
             onSavePreferences={savePrivacyPreferences}
+            onShowExportManifest={showExportManifest}
             onToggleExclusion={changeExclusionState}
             preferences={privacyPreferences}
           />
@@ -1806,24 +1886,38 @@ function MemoryView({
 
 function SettingsView({
   error,
+  exportError,
+  exportBusy,
+  exportManifest,
+  exportNotice,
   isLoading,
   isSaving,
   onAddExclusion,
+  onExportWorkspace,
+  onImportWorkspace,
   onReload,
   onSavePreferences,
+  onShowExportManifest,
   onToggleExclusion,
   preferences,
 }: {
   error: string;
+  exportError: string;
+  exportBusy: boolean;
+  exportManifest: ExportManifest | null;
+  exportNotice: string;
   isLoading: boolean;
   isSaving: boolean;
   onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onExportWorkspace: () => Promise<void>;
+  onImportWorkspace: () => Promise<void>;
   onReload: () => void;
   onSavePreferences: (
     privacyMode: PrivacyMode,
     defaultCaptureRetention: CaptureRetention,
   ) => Promise<boolean>;
   onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
+  onShowExportManifest: () => Promise<void>;
   preferences: PrivacyPreferences | null;
 }) {
   const [keyVaultStatus, setKeyVaultStatus] = useState<KeyVaultStatus | null>(null);
@@ -1861,12 +1955,19 @@ function SettingsView({
     <SettingsForm
       key={`${preferences.privacyMode}-${preferences.defaultCaptureRetention}-${preferences.exclusions.length}`}
       error={error}
+      exportError={exportError}
+      exportBusy={exportBusy}
+      exportManifest={exportManifest}
+      exportNotice={exportNotice}
       isSaving={isSaving}
       onAddExclusion={onAddExclusion}
+      onExportWorkspace={onExportWorkspace}
+      onImportWorkspace={onImportWorkspace}
       onSavePreferences={onSavePreferences}
       keyVaultStatus={keyVaultStatus}
       loadKeyVaultStatus={loadKeyVaultStatus}
       onToggleExclusion={onToggleExclusion}
+      onShowExportManifest={onShowExportManifest}
       preferences={preferences}
     />
   );
@@ -1874,24 +1975,38 @@ function SettingsView({
 
 function SettingsForm({
   error,
+  exportError,
+  exportBusy,
+  exportManifest,
+  exportNotice,
   isSaving,
   keyVaultStatus,
   loadKeyVaultStatus,
   onAddExclusion,
+  onExportWorkspace,
+  onImportWorkspace,
   onSavePreferences,
   onToggleExclusion,
+  onShowExportManifest,
   preferences,
 }: {
   error: string;
+  exportError: string;
+  exportBusy: boolean;
+  exportManifest: ExportManifest | null;
+  exportNotice: string;
   isSaving: boolean;
   keyVaultStatus: KeyVaultStatus | null;
   loadKeyVaultStatus: () => void;
   onAddExclusion: (kind: ExclusionKind, value: string) => Promise<boolean>;
+  onExportWorkspace: () => Promise<void>;
+  onImportWorkspace: () => Promise<void>;
   onSavePreferences: (
     privacyMode: PrivacyMode,
     defaultCaptureRetention: CaptureRetention,
   ) => Promise<boolean>;
   onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
+  onShowExportManifest: () => Promise<void>;
   preferences: PrivacyPreferences;
 }) {
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>(preferences.privacyMode);
@@ -2074,6 +2189,97 @@ function SettingsForm({
             </ul>
           )}
         </section>
+        <section className="settings-card" aria-labelledby="export-heading">
+          <div className="settings-card-heading">
+            <div>
+              <p className="section-kicker">DATA OWNERSHIP</p>
+              <h3 id="export-heading">Export &amp; recovery</h3>
+            </div>
+            <Icon name="lock" />
+          </div>
+          <p className="settings-note">
+            Export writes your entire encrypted workspace, including the key-protecting envelope, to
+            a single sealed archive you keep on your own device. The archive can only be opened by
+            an Aura installation with the same workspace key, so losing that key means losing the
+            archive. Nothing is ever sent to a network.
+          </p>
+          <div className="settings-actions">
+            <button
+              className="primary-action"
+              disabled={exportBusy}
+              onClick={() => void onExportWorkspace()}
+              type="button"
+            >
+              Export workspace&hellip;
+            </button>
+            <button
+              className="quiet-action"
+              disabled={exportBusy}
+              onClick={() => void onImportWorkspace()}
+              type="button"
+            >
+              Restore from archive&hellip;
+            </button>
+            <button
+              className="quiet-action"
+              onClick={() => void onShowExportManifest()}
+              type="button"
+            >
+              Preview export contents
+            </button>
+          </div>
+          {exportNotice && (
+            <p className="settings-note" role="status">
+              {exportNotice}
+            </p>
+          )}
+          {exportError && (
+            <p className="field-error" role="alert">
+              {exportError}
+            </p>
+          )}
+          {exportManifest && (
+            <dl className="export-manifest" aria-label="Export contents">
+              <div>
+                <dt>Format version</dt>
+                <dd>{exportManifest.formatVersion}</dd>
+              </div>
+              <div>
+                <dt>Exported at</dt>
+                <dd>{new Date(exportManifest.exportedAt).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Exported by version</dt>
+                <dd>{exportManifest.exportedByVersion}</dd>
+              </div>
+              <div>
+                <dt>Projects</dt>
+                <dd>{exportManifest.recordCounts.projects}</dd>
+              </div>
+              <div>
+                <dt>Captures</dt>
+                <dd>{exportManifest.recordCounts.captures}</dd>
+              </div>
+              <div>
+                <dt>Decisions</dt>
+                <dd>{exportManifest.recordCounts.decisions}</dd>
+              </div>
+              <div>
+                <dt>Exclusion rules</dt>
+                <dd>{exportManifest.recordCounts.exclusionRules}</dd>
+              </div>
+              <div>
+                <dt>Settings</dt>
+                <dd>{exportManifest.recordCounts.settings}</dd>
+              </div>
+              <div>
+                <dt>SHA-256 checksum</dt>
+                <dd>{exportManifest.payloadChecksum.slice(0, 32)}&hellip;</dd>
+              </div>
+            </dl>
+          )}
+        </section>
+
         <div className="settings-section">
           <h3 className="settings-card-heading">Local key protection</h3>
           <p className="settings-note">

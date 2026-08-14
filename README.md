@@ -16,7 +16,8 @@ The repository includes a Tauri 2 application with a React and TypeScript worksp
 | Durable privacy controls     | Implemented: stored default capture retention resolved in Rust, exclusion rules stored as future policy preparation          |
 | Explicit manual capture      | Implemented with review-before-save, classification, retention, project scope, cancellation, and a native paused-mode block  |
 | Decision memory              | Implemented with user-authored provenance, confidence, project-scoped retrieval, and non-destructive correction/supersession |
-| SQLite local store           | Implemented with numbered, transactional migrations                                                                          |
+| SQLite local store           | Implemented with numbered, transactional migrations                                                                                  |
+| Local export and recovery    | Implemented with a sealed encrypted archive, transactional restore, and a typed manifest preview                                       |
 | Active-window metadata       | Planned after consent and exclusions design                                                                                  |
 | Screen capture and OCR       | Explicitly excluded from V0                                                                                                  |
 | AI provider and cloud sync   | Explicitly excluded from V0                                                                                                  |
@@ -93,10 +94,14 @@ CONTRIBUTING.md              Local quality, review, and privacy-change protocol
 
 Aura's initial capability manifest permits only the default desktop runtime. It intentionally excludes direct file access, screen capture, clipboard reads, microphone use, external URL opening, and arbitrary network calls. New native capabilities must be introduced in a dedicated branch with an ADR, user consent language, a capability manifest change, and validation tests.
 
+## Delivered Increments
+
+Aura ships through gated increments documented in `docs/` and merged through pull requests. V0 has delivered: intentional-capture privacy state (UX-001), manual capture (CAP-001), decision memory (MEM-001), durable privacy controls (SET-001), local SQLite persistence (ENG-002), the DPAPI key-wrapping and envelope encryption boundary (SEC-001), and local export and recovery controls (EXP-001).
+
 ## Next Build Increment
 
-The next product increment is **local export and recovery controls**, built on top of the sealed-value boundary established by SEC-001. The mandatory DPAPI key-wrapping gate from [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md) is satisfied in V0 by the value-level envelope strategy accepted in [ADR-004](docs/decisions/ADR-004-encryption-strategy.md); database-wide re-encryption is a future hardening option, not a V0 requirement. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
+The next product increment is **EXP-002: passphrase re-sealing for portable archives**, built on top of the DPAPI-bound export envelope established by EXP-001 and recorded in [ADR-005](docs/decisions/ADR-005-export-recovery-dpapi-binding.md). Exported archives currently open only on an Aura installation with the same workspace key; a passphrase re-seal step would let users move archives between machines without weakening the default local-only model. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 
-Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), accepted [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md), and accepted [ADR-004](docs/decisions/ADR-004-encryption-strategy.md) before adding native system access or data persistence.
+Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), accepted [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md), accepted [ADR-004](docs/decisions/ADR-004-encryption-strategy.md), and accepted [ADR-005](docs/decisions/ADR-005-export-recovery-dpapi-binding.md) before adding native system access or data persistence.
