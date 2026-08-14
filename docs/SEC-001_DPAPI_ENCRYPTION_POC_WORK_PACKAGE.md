@@ -10,11 +10,11 @@ ADR-003 accepted local SQLite persistence and committed Aura to **Windows DPAPI 
 
 ## 2. Locked Context
 
-| Source | What it locks |
-|---|---|
-| ADR-003 | Random data-encryption key generated on first use, protected with the current Windows user's DPAPI context, stored **only** in wrapped form; raw key never written to logs, analytics, crash reports, or renderer state; renderer must not read raw key material |
-| AGENTS.md | Renderer receives only narrow typed Tauri commands; no dependencies "for future use"; security-sensitive changes need documented rationale and tests |
-| SET-001 (merged) | Existing typed privacy settings, exclusions, and atomic transitions must keep working unchanged |
+| Source           | What it locks                                                                                                                                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADR-003          | Random data-encryption key generated on first use, protected with the current Windows user's DPAPI context, stored **only** in wrapped form; raw key never written to logs, analytics, crash reports, or renderer state; renderer must not read raw key material |
+| AGENTS.md        | Renderer receives only narrow typed Tauri commands; no dependencies "for future use"; security-sensitive changes need documented rationale and tests                                                                                                             |
+| SET-001 (merged) | Existing typed privacy settings, exclusions, and atomic transitions must keep working unchanged                                                                                                                                                                  |
 
 ## 3. Design
 
@@ -47,15 +47,15 @@ The proof of concept implements a `KeyVault` Rust module with three cooperating 
 
 ## 5. Acceptance Criteria
 
-| # | Criterion |
-|---|---|
-| 1 | On Windows, `KeyVault::new` generates a 32-byte key, wraps it with DPAPI, and persists only the wrapped blob |
-| 2 | `seal` / `open` roundtrip is lossless for arbitrary UTF-8 payloads and rejects tampered ciphertext (AEAD authentication failure) |
-| 3 | No raw key bytes are ever written to disk, logged, or exposed through any Tauri command |
-| 4 | The `key_vault_status` command returns only a summary; tests assert that no command output contains raw key material |
-| 5 | At least 6 new unit tests pass on the CI matrix; strict Clippy and rustfmt remain clean |
-| 6 | The full `pnpm quality` gate passes before merge |
-| 7 | ADR-004 is accepted, recording the PoC result and the decision on full database encryption |
+| #   | Criterion                                                                                                                        |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | On Windows, `KeyVault::new` generates a 32-byte key, wraps it with DPAPI, and persists only the wrapped blob                     |
+| 2   | `seal` / `open` roundtrip is lossless for arbitrary UTF-8 payloads and rejects tampered ciphertext (AEAD authentication failure) |
+| 3   | No raw key bytes are ever written to disk, logged, or exposed through any Tauri command                                          |
+| 4   | The `key_vault_status` command returns only a summary; tests assert that no command output contains raw key material             |
+| 5   | At least 6 new unit tests pass on the CI matrix; strict Clippy and rustfmt remain clean                                          |
+| 6   | The full `pnpm quality` gate passes before merge                                                                                 |
+| 7   | ADR-004 is accepted, recording the PoC result and the decision on full database encryption                                       |
 
 ## 6. Branch and Delivery
 

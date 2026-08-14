@@ -13,14 +13,14 @@ EXP-001 delivers the user-facing side of that promise as a narrow, vertically co
 
 ## 2. Locked Context
 
-| Source | What it locks |
-|---|---|
-| ADR-003 | Persistence is local SQLite in the Tauri app-data directory; migrations are numbered, append-only, and transactional |
-| ADR-004 | Value-level envelope encryption with DPAPI-wrapped key is the V0 boundary; the raw key never leaves process memory; only the wrapped blob is persisted |
-| ADR-002 | Intentional capture only; no passive observation; no screenshots, clipboard, microphone, or network sync |
-| AGENTS.md | Renderer receives only narrow typed Tauri commands; no raw DB access from the renderer; no dependencies added "for future use"; security-sensitive changes need documented rationale and tests |
+| Source           | What it locks                                                                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ADR-003          | Persistence is local SQLite in the Tauri app-data directory; migrations are numbered, append-only, and transactional                                                                                                               |
+| ADR-004          | Value-level envelope encryption with DPAPI-wrapped key is the V0 boundary; the raw key never leaves process memory; only the wrapped blob is persisted                                                                             |
+| ADR-002          | Intentional capture only; no passive observation; no screenshots, clipboard, microphone, or network sync                                                                                                                           |
+| AGENTS.md        | Renderer receives only narrow typed Tauri commands; no raw DB access from the renderer; no dependencies added "for future use"; security-sensitive changes need documented rationale and tests                                     |
 | SEC-001 (merged) | The `KeyVault` (`src-tauri/src/security/key_vault.rs`) exposes `seal`/`open` for value envelopes and `key_vault_status`. Export payloads must stay inside the typed command layer — the renderer never reads the database directly |
-| SET-001 (merged) | Privacy settings, retention defaults, and exclusion rules are stored in `settings`/`exclusion_rules` and must be included in the export |
+| SET-001 (merged) | Privacy settings, retention defaults, and exclusion rules are stored in `settings`/`exclusion_rules` and must be included in the export                                                                                            |
 
 ## 3. Design
 
@@ -37,6 +37,7 @@ EXP-001 delivers the user-facing side of that promise as a narrow, vertically co
 ## 4. Scope
 
 **In scope:**
+
 1. New `src-tauri/src/domain/export.rs` — typed export payload DTOs (never raw DB types)
 2. New `src-tauri/src/application/export_service.rs` — export assembly (repository reads) and import application (transactional repository writes), including checksum validation
 3. Three typed commands: `export_workspace`, `import_workspace`, `export_manifest`
@@ -46,6 +47,7 @@ EXP-001 delivers the user-facing side of that promise as a narrow, vertically co
 7. README + this work package status updates
 
 **Out of scope (explicit non-goals):**
+
 - Key export or portable-key recovery (the archive is bound to the DPAPI key — losing the key means losing the archive; that trade-off is documented, not papered over)
 - Scheduled/automatic backups
 - Partial exports (per-project) — single full-archive format in V0
@@ -54,16 +56,16 @@ EXP-001 delivers the user-facing side of that promise as a narrow, vertically co
 
 ## 5. Acceptance Criteria
 
-| # | Criterion |
-|---|---|
-| 1 | `export_workspace` writes exactly one file containing all projects, captures, decisions, settings, exclusions, and migration metadata; the manifest is plaintext and human-readable, all record content is sealed with the DPAPI-bound key |
-| 2 | The export contains no screenshots, clipboard contents, microphone data, credentials, or network references |
-| 3 | `import_workspace` decrypts and validates the envelope, applies all records through the typed repositories inside one transaction, and rolls back entirely on any conflict or validation failure |
-| 4 | Each export and import attempt is recorded in the append-only `export_metadata` table with a typed event record |
-| 5 | The renderer cannot choose arbitrary paths (native dialog only) and cannot read decrypted record content — only manifests and status |
-| 6 | At least 8 new tests pass covering envelope roundtrip, manifest integrity, import rollback, version rejection, and renderer command payloads |
-| 7 | Strict Clippy (`-D warnings`, both profiles), `cargo fmt`, renderer quality, and `pnpm audit` all pass; CI green on the PR |
-| 8 | ADR-005 (proposed alongside) records the export/recovery decision and the key-binding trade-off |
+| #   | Criterion                                                                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `export_workspace` writes exactly one file containing all projects, captures, decisions, settings, exclusions, and migration metadata; the manifest is plaintext and human-readable, all record content is sealed with the DPAPI-bound key |
+| 2   | The export contains no screenshots, clipboard contents, microphone data, credentials, or network references                                                                                                                                |
+| 3   | `import_workspace` decrypts and validates the envelope, applies all records through the typed repositories inside one transaction, and rolls back entirely on any conflict or validation failure                                           |
+| 4   | Each export and import attempt is recorded in the append-only `export_metadata` table with a typed event record                                                                                                                            |
+| 5   | The renderer cannot choose arbitrary paths (native dialog only) and cannot read decrypted record content — only manifests and status                                                                                                       |
+| 6   | At least 8 new tests pass covering envelope roundtrip, manifest integrity, import rollback, version rejection, and renderer command payloads                                                                                               |
+| 7   | Strict Clippy (`-D warnings`, both profiles), `cargo fmt`, renderer quality, and `pnpm audit` all pass; CI green on the PR                                                                                                                 |
+| 8   | ADR-005 (proposed alongside) records the export/recovery decision and the key-binding trade-off                                                                                                                                            |
 
 ## 6. Branch and Delivery
 

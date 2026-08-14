@@ -16,8 +16,8 @@ The repository includes a Tauri 2 application with a React and TypeScript worksp
 | Durable privacy controls     | Implemented: stored default capture retention resolved in Rust, exclusion rules stored as future policy preparation          |
 | Explicit manual capture      | Implemented with review-before-save, classification, retention, project scope, cancellation, and a native paused-mode block  |
 | Decision memory              | Implemented with user-authored provenance, confidence, project-scoped retrieval, and non-destructive correction/supersession |
-| SQLite local store           | Implemented with numbered, transactional migrations                                                                                  |
-| Local export and recovery    | Implemented with a sealed encrypted archive, transactional restore, and a typed manifest preview                                       |
+| SQLite local store           | Implemented with numbered, transactional migrations                                                                          |
+| Local export and recovery    | Implemented with a sealed encrypted archive, transactional restore, and a typed manifest preview                             |
 | Active-window metadata       | Planned after consent and exclusions design                                                                                  |
 | Screen capture and OCR       | Explicitly excluded from V0                                                                                                  |
 | AI provider and cloud sync   | Explicitly excluded from V0                                                                                                  |
@@ -96,11 +96,11 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Delivered Increments
 
-Aura ships through gated increments documented in `docs/` and merged through pull requests. V0 has delivered: intentional-capture privacy state (UX-001), manual capture (CAP-001), decision memory (MEM-001), durable privacy controls (SET-001), local SQLite persistence (ENG-002), the DPAPI key-wrapping and envelope encryption boundary (SEC-001), and local export and recovery controls (EXP-001).
+Aura ships through gated increments documented in `docs/` and merged through pull requests. V0 has delivered: intentional-capture privacy state (UX-001), manual capture (CAP-001), decision memory (MEM-001), durable privacy controls (SET-001), local SQLite persistence (ENG-002), the DPAPI key-wrapping and envelope encryption boundary (SEC-001), and local export and recovery controls (EXP-001), passphrase re-sealing for portable archives (EXP-002), and the retention sweep with context-ageing review (EXP-003).
 
 ## Next Build Increment
 
-The next product increment is **EXP-002: passphrase re-sealing for portable archives**, built on top of the DPAPI-bound export envelope established by EXP-001 and recorded in [ADR-005](docs/decisions/ADR-005-export-recovery-dpapi-binding.md). Exported archives currently open only on an Aura installation with the same workspace key; a passphrase re-seal step would let users move archives between machines without weakening the default local-only model. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
+The next product increment is **EXP-004: configurable ageing window and review presentation**, extending the EXP-003 retention sweep so the 30-day review window is a user-configurable preference (still bounded to a sensible range), the Today review rail surfaces aged captures with a preview and an expiry date, and audit events are visible in the Memory view. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
 
 ## Architecture References
 

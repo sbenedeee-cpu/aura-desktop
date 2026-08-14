@@ -6,12 +6,14 @@ mod security;
 
 use application::export_service::{ExportEnvelope, ExportService};
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
+use application::retention_service::RetentionService;
 use db::{repositories::projects::UpdateProject, LocalStore};
 use domain::export::{ExportEvent, ExportManifest, ExportRecordCounts, PASSPHRASE_SEALING};
 use domain::{
     capture::{CaptureClassification, CaptureKind, CaptureRecord, CaptureRetention},
     claim::{ClaimConfidence, DecisionClaim},
     project::{AuraError, Project},
+    retention::{RetentionSweepResult, ReviewableCapture},
     settings::{
         CreateExclusionRuleInput, ExclusionRule, PrivacyMode, PrivacyPreferences,
         SetExclusionEnabledInput, UpdatePrivacyPreferencesInput,
@@ -319,6 +321,79 @@ fn parse_capture_retention(value: String) -> Result<CaptureRetention, AuraError>
     CaptureRetention::from_store(&value).map_err(|_| {
         AuraError::InvalidInput("Choose a supported retention setting before saving.".to_string())
     })
+}
+
+// EXP-003: retention sweep and context-ageing commands. Every transition is
+// human-initiated or human-confirmed; the sweep itself never deletes
+// anything. Sensitive captures and `until_deleted` captures are never aged
+// automatically.
+#[tauri::command]
+fn run_retention_sweep(state: tauri::State<'_, AppState>) -> Result<RetentionSweepResult, String> {
+    with_store_mut(&state, |store| {
+        let captures = store.captures().captures_for_retention_sweep()?;
+        let service = RetentionService::new(chrono::Utc::now());
+        let (reviewable, result) = service.classify_pass(&captures)?;
+        for capture in reviewable {
+            store.captures().age_capture(&capture.id)?;
+        }
+        Ok(result)
+    })
+}
+
+#[tauri::command]
+fn list_reviewable_captures(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ReviewableCapture>, String> {
+    with_store_mut(&state, |store| {
+        let captures = store.captures().captures_for_retention_sweep()?;
+        let service = RetentionService::new(chrono::Utc::now());
+        let (reviewable, _result) = service.classify_pass(&captures)?;
+        Ok(reviewable)
+    })
+}
+
+#[tauri::command]
+fn keep_capture(
+    capture_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ReviewableCapture, String> {
+    with_store_mut(&state, |store| {
+        let capture = store.captures().keep_capture(&capture_id)?;
+        Ok(reviewable_from_lifecycle(&capture))
+    })
+}
+
+#[tauri::command]
+fn expire_capture(
+    capture_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ReviewableCapture, String> {
+    with_store_mut(&state, |store| {
+        let capture = store.captures().delete_capture(&capture_id)?;
+        Ok(reviewable_from_lifecycle(&capture))
+    })
+}
+
+fn reviewable_from_lifecycle(
+    capture: &db::repositories::captures::LifecycleCapture,
+) -> ReviewableCapture {
+    ReviewableCapture {
+        id: capture.id.clone(),
+        project_id: capture.project_id.clone(),
+        label: capture.label.clone(),
+        classification: capture.classification.clone(),
+        created_at: capture.created_at.clone(),
+        aged_at: capture.lifecycle_updated_at.clone(),
+        days_aged: chrono::Utc::now()
+            .signed_duration_since(
+                capture
+                    .lifecycle_updated_at
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            )
+            .num_days()
+            .max(0),
+    }
 }
 
 // SEC-001: diagnostic verification commands. None of them expose raw key
@@ -690,6 +765,10 @@ pub fn run() {
             import_workspace,
             export_manifest,
             export_workspace_with_passphrase,
+            run_retention_sweep,
+            list_reviewable_captures,
+            keep_capture,
+            expire_capture,
             get_workspace_snapshot,
             create_project,
             list_projects,

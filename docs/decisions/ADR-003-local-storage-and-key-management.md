@@ -20,13 +20,13 @@ Aura will use **Windows DPAPI** as the V0 key-wrapping boundary. A random data-e
 
 ## Consequences
 
-| Area | Consequence |
-|---|---|
-| Privacy | Aura remains local-first by default. Data belongs to the current Windows user and is not synchronized automatically. |
-| Product capability | V0 can provide durable project continuity, settings, and activity history without passive desktop capture. |
-| Architecture | Native Rust owns persistence and key handling; React receives only minimal typed data needed for the visible UI. |
-| Recovery | A failed migration must preserve the prior database file and show a user-readable recovery path rather than silently resetting data. |
-| Future sync | A later sync feature must use an explicit export/sync boundary and cannot assume direct access to local key material. |
+| Area               | Consequence                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Privacy            | Aura remains local-first by default. Data belongs to the current Windows user and is not synchronized automatically.                 |
+| Product capability | V0 can provide durable project continuity, settings, and activity history without passive desktop capture.                           |
+| Architecture       | Native Rust owns persistence and key handling; React receives only minimal typed data needed for the visible UI.                     |
+| Recovery           | A failed migration must preserve the prior database file and show a user-readable recovery path rather than silently resetting data. |
+| Future sync        | A later sync feature must use an explicit export/sync boundary and cannot assume direct access to local key material.                |
 
 ## Non-goals
 

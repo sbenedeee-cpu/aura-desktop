@@ -83,6 +83,24 @@ type CaptureKind = "manual_note" | "pasted_text" | "url";
 type CaptureClassification = "standard" | "sensitive";
 type CaptureRetention = "until_deleted" | "review_in_30_days";
 
+type RetentionSweepResult = {
+  sweptAt: string;
+  capturesReviewed: number;
+  capturesAgedNow: number;
+  capturesAlreadyAged: number;
+  capturesProtected: number;
+};
+
+type ReviewableCapture = {
+  id: string;
+  projectId: string;
+  label: string;
+  classification: CaptureClassification;
+  createdAt: string;
+  agedAt: string;
+  daysAged: number;
+};
+
 type CaptureDraft = {
   projectId: string;
   kind: CaptureKind;
@@ -293,6 +311,9 @@ function App() {
   const [passphraseStrength, setPassphraseStrength] = useState<"weak" | "strong">("weak");
   const [importPassphrase, setImportPassphrase] = useState("");
   const [importPassphraseError, setImportPassphraseError] = useState("");
+  const [reviewableCaptures, setReviewableCaptures] = useState<ReviewableCapture[]>([]);
+  const [isLoadingReview, setIsLoadingReview] = useState(false);
+  const [sweepNotice, setSweepNotice] = useState("");
 
   const selectedProject = snapshot.selectedProject;
 
@@ -374,6 +395,71 @@ function App() {
     }, 0);
     return () => window.clearTimeout(deferredLoad);
   }, [activeView, loadDecisions, selectedProject]);
+
+  // EXP-003: retention sweep / context-ageing. The review queue loads with
+  // Today (no polling loop), and every decision is a deliberate user action
+  // executed through a typed native command.
+  const loadReviewQueue = useCallback(async () => {
+    setIsLoadingReview(true);
+    try {
+      const reviewable = await invoke<ReviewableCapture[]>("list_reviewable_captures", {});
+      setReviewableCaptures(reviewable || []);
+    } catch {
+      setReviewableCaptures([]);
+      setSweepNotice("Aura could not load the local retention review queue.");
+    } finally {
+      setIsLoadingReview(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView !== "today") {
+      return;
+    }
+    const deferredLoad = window.setTimeout(() => {
+      void loadReviewQueue();
+    }, 0);
+    return () => window.clearTimeout(deferredLoad);
+  }, [activeView, loadReviewQueue]);
+
+  async function runRetentionSweep() {
+    setSweepNotice("");
+    try {
+      const result = await invoke<RetentionSweepResult>("run_retention_sweep", {});
+      if (result.capturesAgedNow > 0) {
+        setSweepNotice(
+          `${result.capturesAgedNow} capture${result.capturesAgedNow === 1 ? "" : "s"} moved to review. Sensitive captures and your “keep until deleted” notes are never aged automatically.`,
+        );
+      } else {
+        setSweepNotice("No local captures needed review in this pass.");
+      }
+      await loadReviewQueue();
+    } catch {
+      setSweepNotice("Aura could not run the retention sweep. Your records were not changed.");
+    }
+  }
+
+  async function keepCapture(captureId: string) {
+    setSweepNotice("");
+    try {
+      await invoke<ReviewableCapture>("keep_capture", { captureId });
+      setSweepNotice("Capture kept. The 30-day review window starts again now.");
+      await loadReviewQueue();
+    } catch {
+      setSweepNotice("Aura could not keep that capture. Its record was not changed.");
+    }
+  }
+
+  async function expireCapture(captureId: string) {
+    setSweepNotice("");
+    try {
+      await invoke<ReviewableCapture>("expire_capture", { captureId });
+      setSweepNotice("Capture removed from the local workspace. This cannot be undone.");
+      await loadReviewQueue();
+    } catch {
+      setSweepNotice("Aura could not remove that capture. Its record was not changed.");
+    }
+  }
 
   const continuity = useMemo(
     () => [
@@ -866,6 +952,11 @@ function App() {
           <TodayView
             activity={snapshot.activity}
             continuity={continuity}
+            notice={sweepNotice}
+            reviewableCaptures={reviewableCaptures}
+            isLoadingReview={isLoadingReview}
+            onExpireCapture={expireCapture}
+            onKeepCapture={keepCapture}
             onOpenProject={() => setActiveView("projects")}
             onSelectProject={selectProject}
             privacyMode={snapshot.privacyMode}
@@ -933,11 +1024,13 @@ function App() {
             passphraseModalOpen={passphraseModalOpen}
             passphraseStrength={passphraseStrength}
             onReload={() => void loadPrivacyPreferences()}
+            onRunSweep={runRetentionSweep}
             onSavePreferences={savePrivacyPreferences}
             onSealingChange={setExportSealing}
             onShowExportManifest={showExportManifest}
             onToggleExclusion={changeExclusionState}
             preferences={privacyPreferences}
+            sweepNotice={sweepNotice}
           />
         )}
       </main>
@@ -964,19 +1057,29 @@ function App() {
 function TodayView({
   activity,
   continuity,
+  isLoadingReview,
+  notice,
+  onExpireCapture,
+  onKeepCapture,
   onOpenProject,
   onSelectProject,
   privacyMode,
   projectOptions,
+  reviewableCaptures,
   selectedProject,
   selectionBusy,
 }: {
   activity: WorkspaceSignal[];
   continuity: { label: string; value: string }[];
+  isLoadingReview: boolean;
+  notice: string;
+  onExpireCapture: (captureId: string) => Promise<void>;
+  onKeepCapture: (captureId: string) => Promise<void>;
   onOpenProject: () => void;
   onSelectProject: (projectId: string) => Promise<void>;
   privacyMode: PrivacyMode;
   projectOptions: ProjectListItem[];
+  reviewableCaptures: ReviewableCapture[];
   selectedProject: Project | null;
   selectionBusy: boolean;
 }) {
@@ -1055,8 +1158,116 @@ function TodayView({
         </article>
       </section>
 
+      <ReviewRail
+        isLoading={isLoadingReview}
+        notice={notice}
+        onExpireCapture={onExpireCapture}
+        onKeepCapture={onKeepCapture}
+        projectName={selectedProject.name}
+        reviewableCaptures={reviewableCaptures}
+      />
+
       <ActivityRail activity={activity} projectName={selectedProject.name} />
     </div>
+  );
+}
+
+/// EXP-003: local retention review queue. Aged captures (past their 30-day
+/// review window) are presented for a deliberate keep-or-remove decision.
+/// Sensitive captures and “keep until deleted” notes are never aged, so
+/// they never appear here.
+function ReviewRail({
+  isLoading,
+  notice,
+  onExpireCapture,
+  onKeepCapture,
+  projectName,
+  reviewableCaptures,
+}: {
+  isLoading: boolean;
+  notice: string;
+  onExpireCapture: (captureId: string) => Promise<void>;
+  onKeepCapture: (captureId: string) => Promise<void>;
+  projectName: string;
+  reviewableCaptures: ReviewableCapture[];
+}) {
+  const hasQueue = reviewableCaptures.length > 0;
+
+  return (
+    <section
+      aria-labelledby="review-heading"
+      aria-busy={isLoading && !hasQueue}
+      className="review-rail"
+    >
+      <div className="review-header">
+        <div>
+          <p className="section-kicker">RETENTION REVIEW</p>
+          <h2 id="review-heading">For {projectName}</h2>
+        </div>
+        <span aria-live="polite" className="review-count">
+          {isLoading ? "Checking…" : `${reviewableCaptures.length} due`}
+        </span>
+      </div>
+
+      {notice && (
+        <p aria-live="polite" className="review-notice">
+          {notice}
+        </p>
+      )}
+      {isLoading && !hasQueue ? (
+        <p className="review-empty">Aura is checking local captures for review.</p>
+      ) : !hasQueue ? (
+        <p className="review-empty">
+          Nothing needs review right now. Captures on the 30-day window are brought here when they
+          pass it; sensitive captures and notes kept until deleted are never aged automatically.
+        </p>
+      ) : (
+        <ul className="review-list">
+          {reviewableCaptures.map((capture) => (
+            <li className="review-row" key={capture.id}>
+              <div className="review-summary">
+                <strong>{capture.label || "Untitled capture"}</strong>
+                <small>
+                  In review for {capture.daysAged} day{capture.daysAged === 1 ? "" : "s"} ·{" "}
+                  {capture.classification === "sensitive" ? "marked sensitive" : "standard"}
+                </small>
+              </div>
+              <div className="review-actions">
+                <button
+                  aria-label={`Keep ${capture.label || "this capture"}`}
+                  className="secondary-action"
+                  onClick={() => void onKeepCapture(capture.id)}
+                  type="button"
+                >
+                  Keep
+                </button>
+                <button
+                  aria-label={`Remove ${capture.label || "this capture"} from the local workspace`}
+                  className="quiet-action is-destructive"
+                  onClick={() => {
+                    // Deliberate double confirmation for an irreversible local deletion.
+                    if (
+                      window.confirm(
+                        "Remove this capture from your local workspace? This cannot be undone.",
+                      )
+                    ) {
+                      void onExpireCapture(capture.id);
+                    }
+                  }}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="review-note">
+        Aura never removes captures on its own. Review decisions stay on this device.
+      </p>
+    </section>
   );
 }
 
@@ -2092,6 +2303,7 @@ function SettingsView({
   onPassphraseDraftChange,
   onPassphraseConfirmDraftChange,
   onPassphraseModalClose,
+  onRunSweep,
   passphraseDraft,
   passphraseConfirmDraft,
   passphraseDraftError,
@@ -2103,6 +2315,7 @@ function SettingsView({
   onShowExportManifest,
   onToggleExclusion,
   preferences,
+  sweepNotice,
 }: {
   error: string;
   exportError: string;
@@ -2122,6 +2335,7 @@ function SettingsView({
   onPassphraseDraftChange: (value: string) => void;
   onPassphraseConfirmDraftChange: (value: string) => void;
   onPassphraseModalClose: () => void;
+  onRunSweep: () => Promise<void>;
   passphraseDraft: string;
   passphraseConfirmDraft: string;
   passphraseDraftError: string;
@@ -2136,6 +2350,7 @@ function SettingsView({
   onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
   onShowExportManifest: () => Promise<void>;
   preferences: PrivacyPreferences | null;
+  sweepNotice: string;
 }) {
   const [keyVaultStatus, setKeyVaultStatus] = useState<KeyVaultStatus | null>(null);
 
@@ -2188,6 +2403,7 @@ function SettingsView({
       onPassphraseDraftChange={onPassphraseDraftChange}
       onPassphraseConfirmDraftChange={onPassphraseConfirmDraftChange}
       onPassphraseModalClose={onPassphraseModalClose}
+      onRunSweep={onRunSweep}
       passphraseDraft={passphraseDraft}
       passphraseConfirmDraft={passphraseConfirmDraft}
       passphraseDraftError={passphraseDraftError}
@@ -2201,6 +2417,7 @@ function SettingsView({
       onToggleExclusion={onToggleExclusion}
       onShowExportManifest={onShowExportManifest}
       preferences={preferences}
+      sweepNotice={sweepNotice}
     />
   );
 }
@@ -2225,6 +2442,7 @@ function SettingsForm({
   onPassphraseDraftChange,
   onPassphraseConfirmDraftChange,
   onPassphraseModalClose,
+  onRunSweep,
   passphraseDraft,
   passphraseConfirmDraft,
   passphraseDraftError,
@@ -2236,6 +2454,7 @@ function SettingsForm({
   onToggleExclusion,
   onShowExportManifest,
   preferences,
+  sweepNotice,
 }: {
   error: string;
   exportError: string;
@@ -2270,6 +2489,8 @@ function SettingsForm({
   onToggleExclusion: (exclusionId: string, isEnabled: boolean) => Promise<void>;
   onShowExportManifest: () => Promise<void>;
   preferences: PrivacyPreferences;
+  onRunSweep: () => Promise<void>;
+  sweepNotice: string;
 }) {
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>(preferences.privacyMode);
   const [defaultRetention, setDefaultRetention] = useState<CaptureRetention>(
@@ -2449,6 +2670,29 @@ function SettingsForm({
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section aria-labelledby="lifecycle-heading" className="settings-card lifecycle-card">
+          <div className="settings-card-heading">
+            <div>
+              <p className="section-kicker">DATA LIFECYCLE</p>
+              <h3 id="lifecycle-heading">Retention review</h3>
+            </div>
+            <Icon name="clock" />
+          </div>
+          <p className="settings-note">
+            Captures kept on the 30-day review window move to your Today review queue once they pass
+            it. Sensitive captures and notes kept until deleted are never aged automatically. Aura
+            never removes or ages a capture without your explicit decision.
+          </p>
+          <button className="secondary-action" onClick={() => void onRunSweep()} type="button">
+            Run retention sweep <Icon name="arrow" />
+          </button>
+          {sweepNotice && (
+            <p aria-live="polite" className="settings-note">
+              {sweepNotice}
+            </p>
           )}
         </section>
         <section className="settings-card" aria-labelledby="export-heading">
