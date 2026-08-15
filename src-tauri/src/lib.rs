@@ -26,6 +26,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -372,6 +373,28 @@ fn expire_capture(
         let capture = store.captures().delete_capture(&capture_id)?;
         Ok(reviewable_from_lifecycle(&capture))
     })
+}
+
+// EXP-005: renderer-facing overlay controls. The hotkey itself is handled
+// natively so the summon works while Aura is not focused; these commands
+// let the overlay close itself and let other views open it programmatically.
+#[tauri::command]
+fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or("The Neural Cortex overlay window is not available on this platform.")?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or("The Neural Cortex overlay window is not available on this platform.")?;
+    window.hide().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn reviewable_from_lifecycle(
@@ -739,6 +762,7 @@ fn export_workspace_with_passphrase(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app
@@ -755,6 +779,33 @@ pub fn run() {
                 store: Mutex::new(store),
                 key_vault: Mutex::new(key_vault),
             });
+
+            // EXP-005: the Neural Cortex summon hotkey. Alt+Space opens (or
+            // refocuses) the overlay window from anywhere on the desktop.
+            // The toggle command is the single entry point; voice and the
+            // real brain plug into it in later increments.
+            let overlay_label = "overlay".to_string();
+            app.global_shortcut()
+                .on_shortcut("Alt+Space", move |app_handle, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        let label = overlay_label.clone();
+                        let handle = app_handle.clone();
+                        std::thread::spawn(move || {
+                            // Best-effort: showing the overlay must never panic
+                            // the app on platforms or states we did not expect.
+                            if let Some(window) = handle.get_webview_window(&label) {
+                                let visible = window.is_visible().unwrap_or(false);
+                                if !visible {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                } else {
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        });
+                    }
+                })
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -784,11 +835,17 @@ pub fn run() {
             create_decision,
             correct_decision,
             create_exclusion_rule,
-            set_exclusion_enabled
+            set_exclusion_enabled,
+            show_overlay,
+            hide_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");
 }
+
+// EXP-005 tests live in application/overlay_service.rs; the raw window
+// commands cannot be unit-tested without a live AppHandle, so they are
+// covered by the Windows build and the friction-test loop.
 
 #[cfg(test)]
 mod tests {

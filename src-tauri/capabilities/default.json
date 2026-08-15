@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Aura’s initial desktop shell. Native perception, file access, notifications, and external network access are intentionally withheld until their user-consented capabilities are implemented.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": ["main", "overlay"],
+  "permissions": ["core:default", "core:window:allow-show", "core:window:allow-hide", "core:window:allow-set-focus"]
 }

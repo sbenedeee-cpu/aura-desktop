@@ -19,6 +19,20 @@
         "minHeight": 720,
         "center": true,
         "resizable": true
+      },
+      {
+        "label": "overlay",
+        "title": "Aura",
+        "url": "overlay.html",
+        "width": 560,
+        "height": 380,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {
