@@ -10,6 +10,14 @@
 
 Aura becomes a **Jarvis-class personal assistant**: press a hotkey anywhere on Windows, a small overlay wakes, you speak or type, it understands, acts, and speaks back. The existing memory system (captures, projects, retention, export) becomes the assistant's **long-term memory module** — the piece that makes Aura different from generic chatbots, because it answers from *your* private context, not a generic knowledge base.
 
+### Neural Cortex — the permanent name for the brain
+
+The reasoning engine plus its memory database ship as a single branded system called **Neural Cortex**. Two names, one unit: **Cortex Reasoning** is the physical render of the brain (the brain module: STT → intent → LLM tool-calling → TTS, in local, cloud, or deterministic mode) and **Cortex Memory** is the database layer it reads from and writes to (the existing SQLite store: captures, projects, reminders, settings). From the user's perspective, Cortex is what Aura *is* — everything else (hotkey, overlay, voice pipeline) is the interface through which Cortex is summoned. All code under the brain module lives in `src-tauri/src/cortex/`, and the database-facing repository code is its Cortex Memory half.
+
+### Capture — a first-class core feature
+
+Capture is not retired by this pivot; it is a core feature of Aura, on equal footing with the assistant. Manual capture (notes, pasted text, URLs), project context, retention review, and passphrase export all remain fully functional and are additionally available **by voice through the assistant** (`save_note` in the action registry) — Capture feeds Cortex Memory directly, so everything you capture becomes queryable memory. EXP-001 through EXP-003 features are permanent product surface, not transitional scaffolding.
+
 Five non-negotiables carry over from the privacy mandate and govern every design decision below:
 
 1. **Local-first.** Nothing leaves the machine unless the user explicitly configures a cloud brain, and even then only the specific request payload travels, with secrets stored only in the encrypted local store.
@@ -36,7 +44,7 @@ Five non-negotiables carry over from the privacy mandate and govern every design
 │  │        │ invoke Tauri commands                            │
 │  │        ▼                                                  │
 │  │  ┌─────────────────────────────────────────────────┐     │
-│  │  │ RUST CORE                                       │     │
+│  │  │ RUST CORE (NEURAL CORTEX)                       │     │
 │  │  │                                                 │     │
 │  │  │  VoicePipeline  ── STT ──► Text                │     │
 │  │  │    • local:  whisper-rs (whisper.cpp)          │     │
@@ -66,7 +74,7 @@ Five non-negotiables carry over from the privacy mandate and govern every design
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 3. Module-by-Module Design
+## 3. Module-by-Module Design (all surfaces of Neural Cortex)
 
 ### 3.1 Hotkey & Overlay (EXP-005)
 
@@ -76,7 +84,7 @@ The `tauri-plugin-global-shortcut` plugin registers `Alt+Space` globally on Wind
 
 Recording happens in the webview via the MediaRecorder API (PCM/WAV), passed to Rust as bytes. STT resolves in priority order: **cloud Whisper** if a key is configured and online (Groq Whisper API is free and fast — the budget pick; OpenAI Whisper API at ~$0.006/min is the fallback), otherwise **local whisper-rs** [2] with a small base/small model bundled or downloaded once at first use. Local inference is slower on CPU-only machines (small model: roughly 1–5 s on mid-range hardware), which is acceptable for v1 and improves with hardware. The same preference pattern as the memory module applies: settings store decides, user controls.
 
-### 3.3 Brain (EXP-007)
+### 3.3 Cortex Reasoning (EXP-007)
 
 The brain is a single `execute_intent(text, context)` Rust function that resolves to either a local or cloud LLM based on the settings. Local mode calls **ollama's REST API** on `localhost:11434` [3], which supports tool/function calling natively — so the model itself proposes which tool to run and with what arguments [4]. Recommended models: **Llama 3.2 3B / Qwen 2.5 3B** for modest machines, **Llama 3.1 8B** if the user has 16 GB+ RAM. Cloud mode uses OpenAI `gpt-4o-mini` or Gemini (generous free tier) with the API key stored in the existing DPAPI-backed key vault. If neither is available, the app falls back to a **deterministic command parser** (simple keyword/intent rules over the tool registry) — the assistant never dead-ends.
 
@@ -136,7 +144,7 @@ Realistic total: **2–3 weeks of focused work**, sequenced so each PR is indepe
 
 ## 8. Decision Record References
 
-This document supersedes the EXP-004 roadmap item and becomes the pivot anchor. A new ADR (`ADR-007-jarvis-pivot`) will be filed with the EXP-005 PR documenting: hotkey activation as the primary interface, local-first hybrid brain, push-to-talk voice (no always-listening), and preservation of the existing memory store as the assistant's long-term memory.
+This document supersedes the EXP-004 roadmap item and becomes the pivot anchor. A new ADR (`ADR-007-jarvis-pivot`) will be filed with the EXP-005 PR documenting: hotkey activation as the primary interface, the Neural Cortex system name (Cortex Reasoning + Cortex Memory), local-first hybrid brain, push-to-talk voice (no always-listening), preservation of Capture as a first-class core feature, and preservation of the existing memory store as the assistant's long-term memory.
 
 ## References
 
