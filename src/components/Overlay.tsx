@@ -62,19 +62,31 @@ export function Overlay() {
     }
   }, [isClosing, stopListening]);
 
-  const submit = useCallback(() => {
+  // EXP-007: the real brain replaces the echo. The transcript goes through
+  // the native tiered engine (cloud → local ollama → deterministic floor)
+  // and the reply is surfaced with the tier that actually answered.
+  const submit = useCallback(async () => {
     const value = input.trim();
     if (!value || isThinking || isTranscribing) return;
     setIsThinking(true);
     setReply("");
-    // Echo brain for EXP-005: the Neural Cortex brain (EXP-007) replaces this
-    // delay-and-echo with real local/cloud intent execution.
-    const timer = window.setTimeout(() => {
-      setReply(`Cortex heard: "${value}" — full reasoning arrives in the next build.`);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const result = await invoke<{ tier: string; reply: string; degraded: boolean }>("run_brain", {
+        input: { transcript: value, recentCaptures: [] },
+      });
+      const tierTag =
+        result.tier === "cloud" ? " ☁ cloud" : result.tier === "local" ? " ● local" : " ◂ floor";
+      setReply(result.reply + (result.degraded ? ` (${tierTag})` : ""));
+    } catch (error) {
+      setReply(`Cortex could not run the brain: ${error}`);
+    } finally {
       setIsThinking(false);
       inputRef.current?.focus();
-    }, 450);
-    return () => window.clearTimeout(timer);
+    }
+    return () => {
+      /* no-op cleanup kept for the existing submit() contract */
+    };
   }, [input, isThinking, isTranscribing]);
 
   const handleSubmit = useCallback(() => {

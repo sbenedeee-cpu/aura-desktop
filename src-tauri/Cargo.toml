@@ -48,6 +48,9 @@ optional = true
 [dependencies.ureq]
 version = "2"
 optional = true
+# `json` enables send_json/into_json on ureq requests — the voice and brain
+# tiers both speak JSON over these endpoints.
+features = ["json"]
 
 [dependencies.sha1]
 version = "0.10"
@@ -62,3 +65,6 @@ windows-sys = { version = "0.59", features = [
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
+
+[dev-dependencies]
+tempfile = "3"

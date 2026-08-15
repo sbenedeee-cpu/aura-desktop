@@ -12,6 +12,11 @@
 //   stt_cloud   — optional cloud Whisper transcription (Groq → OpenAI)
 //   voice_pipeline — public dispatcher that resolves the STT tier
 
+// EXP-007: the Hybrid Brain — Neural Cortex reasoning path, extending the
+// input pipeline below with a tiered reasoning engine and the settings
+// store that resolves the tiers at request time.
+pub mod brain;
+pub mod settings;
 pub mod stt_cloud;
 pub mod stt_local;
 pub mod voice_pipeline;
