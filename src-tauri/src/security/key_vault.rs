@@ -237,6 +237,7 @@ fn generate_key_material(length: usize) -> Result<Vec<u8>, KeyVaultError> {
 /// the `KeyVault` is dropped (the `Vec` is freed by the allocator; sensitive
 /// zeroing is part of a future hardening pass once the DPAPI blob is
 /// validated on real Windows).
+#[derive(Clone)]
 pub struct KeyVault {
     data_directory: PathBuf,
     key: [u8; KEY_LENGTH],

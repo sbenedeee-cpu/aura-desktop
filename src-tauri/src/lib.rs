@@ -8,6 +8,8 @@ mod security;
 use application::export_service::{ExportEnvelope, ExportService};
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
 use application::retention_service::RetentionService;
+use cortex::brain::{self, BrainContext};
+use cortex::settings::store::{SettingField, SettingsStore};
 use cortex::voice_pipeline::{self, TranscriptionRequest, TranscriptionResult};
 use db::{repositories::projects::UpdateProject, LocalStore};
 use domain::export::{ExportEvent, ExportManifest, ExportRecordCounts, PASSPHRASE_SEALING};
@@ -74,6 +76,7 @@ struct CreateDecisionInput {
 struct AppState {
     store: Mutex<LocalStore>,
     key_vault: Mutex<KeyVault>,
+    settings_store: Mutex<SettingsStore>,
 }
 
 fn with_store_mut<T>(
@@ -406,6 +409,105 @@ fn transcribe_audio(
 /// Whether the on-device speech model is installed and which STT tier will
 /// run. The overlay uses this to show "download the speech model" as a
 /// one-time first-run action and to label transcripts (local vs cloud).
+
+// EXP-007: the Hybrid Brain — a single `run_brain` entry point runs the
+// typed transcript through the tiered reasoning engine (local ollama,
+// Groq/OpenAI cloud, deterministic floor). Settings are resolved at
+// request time; secrets are opened from the sealed store and never travel
+// through the typed command layer. The overlay also reads brain and
+// settings status to build its "bring ollama online" and key affordances.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunBrainInput {
+    transcript: String,
+    /// Recent retrieval results — the only memory that ever leaves the
+    /// machine. Raw captures, never the full store.
+    #[serde(default)]
+    recent_captures: Vec<String>,
+}
+
+#[tauri::command]
+fn run_brain(
+    _app: tauri::AppHandle,
+    input: RunBrainInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<brain::BrainResult, String> {
+    let transcript = input.transcript.trim().to_string();
+    if transcript.is_empty() {
+        return Err("Cortex needs something to reason about — type or dictate first.".into());
+    }
+
+    let settings_store = state
+        .settings_store
+        .lock()
+        .map_err(|_| "Aura could not access its settings safely.".to_string())?
+        .clone();
+
+    // The engine may wait up to two minutes on the local tier; never block
+    // the Tauri event loop. The overlay renders its own thinking state.
+    std::thread::spawn(move || {
+        let settings = settings_store
+            .load()
+            .map_err(|error| format!("Aura could not read its settings: {error}"))?;
+        let context = BrainContext {
+            recent_captures: input.recent_captures,
+        };
+        let result = brain::execute_intent(&transcript, &context, &settings, &settings_store);
+        Ok::<brain::BrainResult, String>(result)
+    })
+    .join()
+    .map_err(|_| "Aura could not run its brain safely.".to_string())?
+}
+
+/// Reachability/status probe: does ollama have anything to run, and is a
+/// cloud tier configured? The overlay uses this for the "install ollama"
+/// one-time action and the key-status cards.
+#[tauri::command]
+fn get_brain_status(state: tauri::State<'_, AppState>) -> Result<brain::BrainStatus, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    let settings_store = SettingsStore::new(key_vault.clone());
+    let settings = settings_store
+        .load()
+        .map_err(|error| format!("Aura could not read its settings: {error}"))?;
+    Ok(brain::probe_status(&settings))
+}
+
+#[tauri::command]
+fn get_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<cortex::settings::store::SettingsSnapshot, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    let settings_store = SettingsStore::new(key_vault.clone());
+    settings_store
+        .snapshot()
+        .map_err(|error| format!("Aura could not read its settings: {error}"))
+}
+
+/// One field at a time, by name: the renderer never round-trips secrets —
+/// key fields accept new key bytes only and the snapshot reports presence
+/// without the value.
+#[tauri::command]
+fn save_setting(
+    field: SettingField,
+    state: tauri::State<'_, AppState>,
+) -> Result<cortex::settings::store::SettingsSnapshot, String> {
+    let key_vault = state
+        .key_vault
+        .lock()
+        .map_err(|_| "Aura could not access its key vault safely.".to_string())?;
+    let settings_store = SettingsStore::new(key_vault.clone());
+    settings_store
+        .update(field)
+        .and_then(|_| settings_store.snapshot())
+        .map_err(|error| format!("Aura could not save that setting: {error}"))
+}
+
 #[tauri::command]
 fn get_stt_status(app: tauri::AppHandle) -> Result<SttStatus, String> {
     let data_dir = app
@@ -824,7 +926,8 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             app.manage(AppState {
                 store: Mutex::new(store),
-                key_vault: Mutex::new(key_vault),
+                key_vault: Mutex::new(key_vault.clone()),
+                settings_store: Mutex::new(SettingsStore::new(key_vault)),
             });
 
             // EXP-005: the Neural Cortex summon hotkey. Alt+Space opens (or
@@ -887,6 +990,10 @@ pub fn run() {
             hide_overlay,
             transcribe_audio,
             get_stt_status,
+            run_brain,
+            get_brain_status,
+            get_settings,
+            save_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");
