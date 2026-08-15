@@ -32,6 +32,27 @@ chacha20poly1305 = "0.10"
 tauri-plugin-dialog = "2"
 argon2 = "0.5"
 
+# EXP-006: the Voice Pipeline. whisper-rs (whisper.cpp) runs local
+# speech-to-text entirely on-device; ureq is a tiny synchronous HTTPS client
+# used only for optional cloud STT (Groq Whisper free tier, then OpenAI
+# fallback). Both are gated behind the `voice` feature, which is enabled by
+# default because push-to-talk is core product surface (PRD §7.2).
+[features]
+default = ["voice"]
+voice = ["whisper-rs", "ureq", "sha1"]
+
+[dependencies.whisper-rs]
+version = "0.16"
+optional = true
+
+[dependencies.ureq]
+version = "2"
+optional = true
+
+[dependencies.sha1]
+version = "0.10"
+optional = true
+
 # SEC-001: DPAPI key wrapping (Windows only).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
