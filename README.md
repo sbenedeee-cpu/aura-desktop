@@ -21,6 +21,9 @@ The repository includes a Tauri 2 application with a React and TypeScript worksp
 | Active-window metadata       | Planned after consent and exclusions design                                                                                  |
 | Screen capture and OCR       | Explicitly excluded from V0                                                                                                  |
 | AI provider and cloud sync   | Explicitly excluded from V0                                                                                                  |
+| Neural Cortex summon hotkey  | Implemented: Alt+Space summons a focused overlay (EXP-005); voice and reasoning arrive in later increments                  |
+
+The roadmap pivoted from incremental capture features to the [Jarvis architecture](docs/architecture/AURA_JARVIS_ARCHITECTURE.md): Aura's brain is named the **Neural Cortex**, split into Cortex Reasoning (voice, intent, and actions) and Cortex Memory (the existing local SQLite store). Capture remains a first-class core feature.
 
 ## Technology Stack
 
@@ -96,12 +99,12 @@ Aura's initial capability manifest permits only the default desktop runtime. It 
 
 ## Delivered Increments
 
-Aura ships through gated increments documented in `docs/` and merged through pull requests. V0 has delivered: intentional-capture privacy state (UX-001), manual capture (CAP-001), decision memory (MEM-001), durable privacy controls (SET-001), local SQLite persistence (ENG-002), the DPAPI key-wrapping and envelope encryption boundary (SEC-001), and local export and recovery controls (EXP-001), passphrase re-sealing for portable archives (EXP-002), and the retention sweep with context-ageing review (EXP-003).
+Aura ships through gated increments documented in `docs/` and merged through pull requests. V0 has delivered: intentional-capture privacy state (UX-001), manual capture (CAP-001), decision memory (MEM-001), durable privacy controls (SET-001), local SQLite persistence (ENG-002), the DPAPI key-wrapping and envelope encryption boundary (SEC-001), and local export and recovery controls (EXP-001), passphrase re-sealing for portable archives (EXP-002), and the retention sweep with context-ageing review (EXP-003). The product then pivoted to the Neural Cortex assistant: [ADR-007](docs/decisions/ADR-007-jarvis-pivot-neural-cortex.md) records the decision, and EXP-005 delivered the hotkey-summoned assistant overlay with a new visual identity (Alt+Space, echo brain, Esc to dismiss).
 
 ## Next Build Increment
 
-The next product increment is **EXP-004: configurable ageing window and review presentation**, extending the EXP-003 retention sweep so the 30-day review window is a user-configurable preference (still bounded to a sensible range), the Today review rail surfaces aged captures with a preview and an expiry date, and audit events are visible in the Memory view. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved.
+The next product increment is **EXP-006: voice pipeline for the Neural Cortex overlay**. Push-to-talk capture runs on Windows (local whisper.cpp via whisper-rs by default, with an optional cloud fallback) and streams transcribed text into the overlay command line. Always-listening wake words are explicitly excluded. Do not introduce continuous capture, screenshot retention, OCR, provider credentials, cloud synchronization, or computer-use actions until their individual product and security designs are approved. The deferred EXP-004 configurable ageing window was folded into EXP-007 (the hybrid local/cloud brain).
 
 ## Architecture References
 
-Read [the architecture overview](docs/architecture.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), accepted [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md), accepted [ADR-004](docs/decisions/ADR-004-encryption-strategy.md), and accepted [ADR-005](docs/decisions/ADR-005-export-recovery-dpapi-binding.md) before adding native system access or data persistence.
+Read [the architecture overview](docs/architecture.md), [the Aura Jarvis architecture](docs/architecture/AURA_JARVIS_ARCHITECTURE.md), [ADR-001](docs/decisions/ADR-001-tauri-react-rust.md), [ADR-002](docs/decisions/ADR-002-intentional-capture.md), accepted [ADR-003](docs/decisions/ADR-003-local-storage-and-key-management.md), accepted [ADR-004](docs/decisions/ADR-004-encryption-strategy.md), accepted [ADR-005](docs/decisions/ADR-005-export-recovery-dpapi-binding.md), and accepted [ADR-006](docs/decisions/ADR-006-retention-sweep-context-ageing.md) before adding native system access or data persistence.
