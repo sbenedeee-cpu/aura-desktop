@@ -1,4 +1,5 @@
 mod application;
+mod cortex;
 mod db;
 mod domain;
 
@@ -7,6 +8,7 @@ mod security;
 use application::export_service::{ExportEnvelope, ExportService};
 use application::project_service::{parse_project_status, ProjectService, WorkspaceSnapshot};
 use application::retention_service::RetentionService;
+use cortex::voice_pipeline::{self, TranscriptionRequest, TranscriptionResult};
 use db::{repositories::projects::UpdateProject, LocalStore};
 use domain::export::{ExportEvent, ExportManifest, ExportRecordCounts, PASSPHRASE_SEALING};
 use domain::{
@@ -378,6 +380,51 @@ fn expire_capture(
 // EXP-005: renderer-facing overlay controls. The hotkey itself is handled
 // natively so the summon works while Aura is not focused; these commands
 // let the overlay close itself and let other views open it programmatically.
+
+// EXP-006: the Voice Pipeline surface. The overlay records push-to-talk
+// audio in the webview, resamples it to 16 kHz float PCM, and hands it to
+// these commands. Transcription resolves cloud-first when the user
+// configured a key, otherwise entirely on-device via whisper-rs (the model
+// is downloaded once at first use). The overlay never learns which tier ran.
+#[tauri::command]
+fn transcribe_audio(
+    app: tauri::AppHandle,
+    request: TranscriptionRequest,
+) -> Result<TranscriptionResult, String> {
+    // Transcription can take several seconds on CPU; never block the event
+    // loop. The overlay shows its own thinking state while this runs.
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    std::thread::spawn(move || voice_pipeline::transcribe(request, &data_dir, None, None))
+        .join()
+        .map_err(|_| "Aura could not run its transcription pipeline safely.".to_string())?
+        .map_err(|error| format!("Aura could not transcribe that recording: {error}."))
+}
+
+/// Whether the on-device speech model is installed and which STT tier will
+/// run. The overlay uses this to show "download the speech model" as a
+/// one-time first-run action and to label transcripts (local vs cloud).
+#[tauri::command]
+fn get_stt_status(app: tauri::AppHandle) -> Result<SttStatus, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    let model_available = cortex::stt_local::is_model_available(&data_dir);
+    Ok(SttStatus {
+        model_available,
+        prefer_cloud: false,
+    })
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SttStatus {
+    model_available: bool,
+    prefer_cloud: bool,
+}
+
 #[tauri::command]
 fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
@@ -838,6 +885,8 @@ pub fn run() {
             set_exclusion_enabled,
             show_overlay,
             hide_overlay,
+            transcribe_audio,
+            get_stt_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aura");

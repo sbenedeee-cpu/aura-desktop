@@ -245,3 +245,69 @@ body {
   font-size: 10.5px;
   letter-spacing: 0.04em;
 }
+
+/* EXP-006: recording affordance — the whole mic footer becomes the stop
+   target while dictating, so clicking anywhere near the icon ends capture. */
+.aura-mic {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+.aura-mic:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.aura-mic:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.aura-mic[data-recording="on"],
+.aura-overlay[data-voice="active"] .aura-mic {
+  opacity: 1;
+  color: var(--aura-overlay-accent);
+  animation: aura-mic-listen 1.1s ease-in-out infinite;
+}
+
+@keyframes aura-mic-listen {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.aura-orb[data-pulse="on"] {
+  animation: aura-orb-record 0.9s ease-in-out infinite;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(255, 140, 140, 0.95),
+    rgba(220, 70, 70, 0.85) 60%,
+    rgba(150, 40, 60, 0.9)
+  );
+}
+
+@keyframes aura-orb-record {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 14px rgba(220, 70, 70, 0.4);
+  }
+  50% {
+    transform: scale(1.16);
+    box-shadow: 0 0 20px rgba(220, 70, 70, 0.7);
+  }
+}
+
+.aura-voice-error {
+  margin-left: auto;
+  color: rgba(255, 130, 130, 0.9);
+  font-size: 10.5px;
+}
